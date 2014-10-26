@@ -46,12 +46,20 @@ AC_CHECK_FUNC([dlopen], [],
               AC_CHECK_LIB([dl], [dlopen], DLOPEN_LIBS="-ldl"))
 AC_SUBST(DLOPEN_LIBS)
 
-AC_CHECK_DECL(SFD_CLOEXEC,[],
-	      [AC_MSG_ERROR("SFD_CLOEXEC is needed to compile weston")],
-	      [[#include <sys/signalfd.h>]])
-AC_CHECK_DECL(TFD_CLOEXEC,[],
-	      [AC_MSG_ERROR("TFD_CLOEXEC is needed to compile weston")],
-	      [[#include <sys/timerfd.h>]])
+# Credential support on FreeBSD and DragonFly.
+AC_CHECK_HEADERS([sys/ucred.h])
+
+# dlopen()
+AC_CHECK_LIB([dl], [dlsym], [DL_LIBS=-ldl])
+AC_SUBST([DL_LIBS])
+
+# Defines __FreeBSD__ if we're on FreeBSD, __DragonFly__ if we're on DragonFly.
+AC_CHECK_HEADERS([sys/param.h])
+
+# waitid() and signal.h are needed for the test suite.
+AC_CHECK_FUNCS([waitid])
+AC_CHECK_HEADERS([signal.h])
+
 AC_CHECK_DECL(CLOCK_MONOTONIC,[],
 	      [AC_MSG_ERROR("CLOCK_MONOTONIC is needed to compile weston")],
 	      [[#include <time.h>]])
@@ -307,11 +315,11 @@ fi
 AM_CONDITIONAL(ENABLE_VAAPI_RECORDER, test "x$have_libva" = xyes)
 
 
-AC_CHECK_LIB([jpeg], [jpeg_CreateDecompress], have_jpeglib=yes)
+#AC_CHECK_LIB([jpeg], [jpeg_CreateDecompress], have_jpeglib=yes)
 if test x$have_jpeglib = xyes; then
   JPEG_LIBS="-ljpeg"
-else
-  AC_ERROR([libjpeg not found])
+#else
+#  AC_ERROR([libjpeg not found])
 fi
 AC_SUBST(JPEG_LIBS)
 

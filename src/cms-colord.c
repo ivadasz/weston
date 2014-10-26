@@ -548,10 +548,19 @@ module_init(struct weston_compositor *ec,
 				   colord_run_loop_thread, cms);
 
 	/* batch device<->profile updates */
+#ifdef __DragonFly__
+	if (pipe(fd) == -1) {
+		colord_module_destroy(cms);
+		return -1;
+	}
+        fcntl(fd[0], O_CLOEXEC);
+        fcntl(fd[1], O_CLOEXEC);
+#else
 	if (pipe2(fd, O_CLOEXEC) == -1) {
 		colord_module_destroy(cms);
 		return -1;
 	}
+#endif
 	cms->readfd = fd[0];
 	cms->writefd = fd[1];
 	loop = wl_display_get_event_loop(ec->wl_display);

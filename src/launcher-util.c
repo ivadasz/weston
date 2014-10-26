@@ -39,9 +39,14 @@
 #include <sys/ioctl.h>
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __DragonFly__
+#include <sys/consio.h>
+#include <sys/kbio.h>
+#else
 #include <linux/vt.h>
 #include <linux/kd.h>
 #include <linux/major.h>
+#endif
 
 #include "compositor.h"
 #include "launcher-util.h"
@@ -171,7 +176,11 @@ weston_launcher_open(struct weston_launcher *launcher,
 	msg.msg_controllen = sizeof control;
 	
 	do {
+#ifdef __DragonFly__
+		len = recvmsg(launcher->fd, &msg, 0);
+#else
 		len = recvmsg(launcher->fd, &msg, MSG_CMSG_CLOEXEC);
+#endif
 	} while (len < 0 && errno == EINTR);
 
 	if (len != sizeof ret ||
@@ -293,7 +302,9 @@ setup_tty(struct weston_launcher *launcher, int tty)
 {
 	struct wl_event_loop *loop;
 	struct vt_mode mode = { 0 };
+#ifndef __DragonFly__
 	struct stat buf;
+#endif
 	char tty_device[32] ="<stdin>";
 	int ret, kd_mode;
 
@@ -304,7 +315,11 @@ setup_tty(struct weston_launcher *launcher, int tty)
 			return -1;
 		}
 	} else {
+#ifdef __DragonFly__
+		snprintf(tty_device, sizeof tty_device, "/dev/ttyv%d", tty);
+#else
 		snprintf(tty_device, sizeof tty_device, "/dev/tty%d", tty);
+#endif
 		launcher->tty = open(tty_device, O_RDWR | O_CLOEXEC);
 		if (launcher->tty == -1) {
 			weston_log("couldn't open tty %s: %m\n", tty_device);
@@ -312,6 +327,7 @@ setup_tty(struct weston_launcher *launcher, int tty)
 		}
 	}
 
+#if 0
 	if (fstat(launcher->tty, &buf) == -1 ||
 	    major(buf.st_rdev) != TTY_MAJOR || minor(buf.st_rdev) == 0) {
 		weston_log("%s not a vt\n", tty_device);
@@ -319,6 +335,7 @@ setup_tty(struct weston_launcher *launcher, int tty)
 			   "use --tty to specify a tty\n");
 		goto err_close;
 	}
+#endif
 
 	ret = ioctl(launcher->tty, KDGETMODE, &kd_mode);
 	if (ret) {
@@ -331,19 +348,27 @@ setup_tty(struct weston_launcher *launcher, int tty)
 		goto err_close;
 	}
 
+#ifdef __DragonFly__
+	ioctl(launcher->tty, VT_ACTIVATE, tty == 0 ? ttyslot() : tty);
+	ioctl(launcher->tty, VT_WAITACTIVE, tty == 0 ? ttyslot() : tty);
+#else
 	ioctl(launcher->tty, VT_ACTIVATE, minor(buf.st_rdev));
 	ioctl(launcher->tty, VT_WAITACTIVE, minor(buf.st_rdev));
+#endif
 
 	if (ioctl(launcher->tty, KDGKBMODE, &launcher->kb_mode)) {
 		weston_log("failed to read keyboard mode: %m\n");
 		goto err_close;
 	}
 
+#ifdef __DragonFly__
+#else
 	if (ioctl(launcher->tty, KDSKBMUTE, 1) &&
 	    ioctl(launcher->tty, KDSKBMODE, K_OFF)) {
 		weston_log("failed to set K_OFF keyboard mode: %m\n");
 		goto err_close;
 	}
+#endif
 
 	ret = ioctl(launcher->tty, KDSETMODE, KD_GRAPHICS);
 	if (ret) {
@@ -414,7 +439,11 @@ weston_launcher_connect(struct weston_compositor *compositor, int tty,
 		/* We don't get a chance to read out the original kb
 		 * mode for the tty, so just hard code K_UNICODE here
 		 * in case we have to clean if weston-launch dies. */
+#ifdef __DragonFly__
+		launcher->kb_mode = K_CODE;
+#else
 		launcher->kb_mode = K_UNICODE;
+#endif
 
 		loop = wl_display_get_event_loop(compositor->wl_display);
 		launcher->source = wl_event_loop_add_fd(loop, launcher->fd,

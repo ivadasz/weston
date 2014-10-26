@@ -732,7 +732,7 @@ x11_output_init_shm(struct x11_backend *b, struct x11_output *output,
 
 
 	/* Create SHM segment and attach it */
-	output->shm_id = shmget(IPC_PRIVATE, width * height * (bitsperpixel / 8), IPC_CREAT | S_IRWXU);
+	output->shm_id = shmget(IPC_PRIVATE, width * height * (bitsperpixel / 8), IPC_CREAT | SHM_R | SHM_W);
 	if (output->shm_id == -1) {
 		weston_log("x11shm: failed to allocate SHM segment\n");
 		return -1;
