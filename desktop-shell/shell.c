@@ -2301,6 +2301,7 @@ shell_surface_calculate_layer_link (struct shell_surface *shsurf)
 	}
 
 	assert(0 && "Unknown shell surface type");
+	return NULL;
 }
 
 static void
