@@ -36,8 +36,9 @@
 #include <time.h>
 #include <cairo.h>
 #include <sys/mman.h>
-#include <sys/epoll.h>
-#include <sys/timerfd.h>
+#include <event2/event.h>
+//#include <sys/epoll.h>
+//#include <sys/timerfd.h>
 
 #ifdef HAVE_CAIRO_EGL
 #include <wayland-egl.h>
@@ -101,7 +102,8 @@ struct display {
 	uint32_t display_fd_events;
 	struct task display_task;
 
-	int epoll_fd;
+//	int epoll_fd;
+	struct event_base *evbase;
 	struct wl_list deferred_list;
 
 	int running;
@@ -3630,8 +3632,15 @@ data_offer_receive_data(struct data_offer *offer, const char *mime_type,
 {
 	int p[2];
 
+#ifdef __DragonFly__
+	if (pipe(p) == -1)
+		return;
+	fcntl(p[0], O_CLOEXEC);
+	fcntl(p[1], O_CLOEXEC);
+#else
 	if (pipe2(p, O_CLOEXEC) == -1)
 		return;
+#endif
 
 	wl_data_offer_receive(offer->offer, mime_type, p[1]);
 	close(p[1]);
@@ -5460,6 +5469,7 @@ display_create(int *argc, char *argv[])
 		return NULL;
 	}
 
+	d->evbase = event_base_new();
 	d->epoll_fd = os_epoll_create_cloexec();
 	d->display_fd = wl_display_get_fd(d->display);
 	d->display_task.run = handle_display_data;

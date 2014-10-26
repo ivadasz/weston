@@ -252,8 +252,15 @@ clipboard_set_selection(struct wl_listener *listener, void *data)
 
 	mime_types = source->mime_types.data;
 
+#ifdef __DragonFly__
+	if (pipe(p) == -1)
+		return;
+	fcntl(p[0], O_CLOEXEC);
+	fcntl(p[1], O_CLOEXEC);
+#else
 	if (pipe2(p, O_CLOEXEC) == -1)
 		return;
+#endif
 
 	source->send(source, mime_types[0], p[1]);
 

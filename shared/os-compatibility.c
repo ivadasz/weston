@@ -27,7 +27,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <sys/epoll.h>
+//#include <sys/epoll.h>
+#include <event2/event.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -81,6 +82,7 @@ os_socketpair_cloexec(int domain, int type, int protocol, int *sv)
 	return -1;
 }
 
+#if 0
 int
 os_epoll_create_cloexec(void)
 {
@@ -97,6 +99,7 @@ os_epoll_create_cloexec(void)
 	fd = epoll_create(1);
 	return set_cloexec_or_close(fd);
 }
+#endif
 
 static int
 create_tmpfile_cloexec(char *tmpname)
