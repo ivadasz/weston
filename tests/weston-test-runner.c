@@ -77,7 +77,11 @@ exec_and_report_test(const struct weston_test *t, void *test_data, int iteration
 	int success = 0;
 	int skip = 0;
 	int hardfail = 0;
+#ifdef __DragonFly__
+	int status;
+#else
 	siginfo_t info;
+#endif
 
 	pid_t pid = fork();
 	assert(pid >= 0);
@@ -85,16 +89,36 @@ exec_and_report_test(const struct weston_test *t, void *test_data, int iteration
 	if (pid == 0)
 		run_test(t, test_data); /* never returns */
 
+#ifdef __DragonFly__
+	if (waitpid(-1, &status, 0)) {
+		fprintf(stderr, "waitpid failed: %m\n");
+		abort();
+	}
+#else
 	if (waitid(P_ALL, 0, &info, WEXITED)) {
 		fprintf(stderr, "waitid failed: %m\n");
 		abort();
 	}
+#endif
 
 	if (test_data)
 		fprintf(stderr, "test \"%s/%i\":\t", t->name, iteration);
 	else
 		fprintf(stderr, "test \"%s\":\t", t->name);
 
+#ifdef __DragonFly__
+	if (WIFEXITED(status)) {
+		fprintf(stderr, "exit status %d", WEXITSTATUS(status));
+		if (WEXITSTATUS(status) == EXIT_SUCCESS)
+			success = 1;
+		else if (WEXITSTATUS(status) == SKIP)
+			skip = 1;
+	} else if (WIFSIGNALED(status) || WCOREDUMP(status)) {
+		fprintf(stderr, "signal %d", WTERMSIG(status));
+		if (WTERMSIG(status) != SIGABRT)
+			hardfail = 1;
+	}
+#else
 	switch (info.si_code) {
 	case CLD_EXITED:
 		fprintf(stderr, "exit status %d", info.si_status);
@@ -110,6 +134,7 @@ exec_and_report_test(const struct weston_test *t, void *test_data, int iteration
 			hardfail = 1;
 		break;
 	}
+#endif
 
 	if (t->must_fail)
 		success = !success;
@@ -150,12 +175,13 @@ int main(int argc, char *argv[])
 	int total = 0;
 	int pass = 0;
 	int skip = 0;
+	extern char *__progname;
 
 	if (argc == 2) {
 		const char *testname = argv[1];
 		if (strcmp(testname, "--help") == 0 ||
 		    strcmp(testname, "-h") == 0) {
-			fprintf(stderr, "Usage: %s [test-name]\n", program_invocation_short_name);
+			fprintf(stderr, "Usage: %s [test-name]", __progname);
 			list_tests();
 			exit(EXIT_SUCCESS);
 		}
