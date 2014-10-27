@@ -30,6 +30,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <err.h>
 #include <errno.h>
 #include <math.h>
 #include <assert.h>
@@ -99,6 +100,7 @@ struct display {
 	uint32_t serial;
 
 	int display_fd;
+	struct event *display_ev;
 	uint32_t display_fd_events;
 	struct task display_task;
 
@@ -344,7 +346,7 @@ struct input {
 	int32_t repeat_delay_nsec;
 
 	struct task repeat_task;
-	int repeat_timer_fd;
+	struct event *repeat_timer_ev;
 	uint32_t repeat_sym;
 	uint32_t repeat_key;
 	uint32_t repeat_time;
@@ -394,7 +396,7 @@ struct tooltip {
 	struct widget *widget;
 	char *entry;
 	struct task tooltip_task;
-	int tooltip_fd;
+	struct event *tooltipev;
 	float x, y;
 };
 
@@ -2024,21 +2026,19 @@ widget_destroy_tooltip(struct widget *parent)
 		tooltip->widget = NULL;
 	}
 
-	close(tooltip->tooltip_fd);
+	event_free(tooltip->tooltipev);
 	free(tooltip->entry);
 	free(tooltip);
 	parent->tooltip = NULL;
 }
 
 static void
-tooltip_func(struct task *task, uint32_t events)
+tooltip_func(evutil_socket_t fd, short what, void *arg)
 {
+	struct task *task = (struct task *)arg;
 	struct tooltip *tooltip =
 		container_of(task, struct tooltip, tooltip_task);
-	uint64_t exp;
 
-	if (read(tooltip->tooltip_fd, &exp, sizeof (uint64_t)) != sizeof (uint64_t))
-		abort();
 	window_create_tooltip(tooltip);
 }
 
@@ -2046,16 +2046,11 @@ tooltip_func(struct task *task, uint32_t events)
 static int
 tooltip_timer_reset(struct tooltip *tooltip)
 {
-	struct itimerspec its;
+	struct timeval tv;
 
-	its.it_interval.tv_sec = 0;
-	its.it_interval.tv_nsec = 0;
-	its.it_value.tv_sec = TOOLTIP_TIMEOUT / 1000;
-	its.it_value.tv_nsec = (TOOLTIP_TIMEOUT % 1000) * 1000 * 1000;
-	if (timerfd_settime(tooltip->tooltip_fd, 0, &its, NULL) < 0) {
-		fprintf(stderr, "could not set timerfd\n: %m");
-		return -1;
-	}
+	tv.tv_sec = TOOLTIP_TIMEOUT / 1000;
+	tv.tv_usec = (TOOLTIP_TIMEOUT % 1000) * 1000;
+	evtimer_add(tooltip->tooltipev, &tv);
 
 	return 0;
 }
@@ -2088,15 +2083,9 @@ widget_set_tooltip(struct widget *parent, char *entry, float x, float y)
 	tooltip->x = x;
 	tooltip->y = y;
 	tooltip->entry = strdup(entry);
-	tooltip->tooltip_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
-	if (tooltip->tooltip_fd < 0) {
-		fprintf(stderr, "could not create timerfd\n: %m");
-		return -1;
-	}
-
 	tooltip->tooltip_task.run = tooltip_func;
-	display_watch_fd(parent->window->display, tooltip->tooltip_fd,
-			 EPOLLIN, &tooltip->tooltip_task);
+	tooltip->tooltipev = evtimer_new(parent->window->display->evbase,
+					 tooltip_func, &tooltip->tooltip_task);
 	tooltip_timer_reset(tooltip);
 
 	return 0;
@@ -2776,13 +2765,8 @@ static void
 input_remove_keyboard_focus(struct input *input)
 {
 	struct window *window = input->keyboard_focus;
-	struct itimerspec its;
 
-	its.it_interval.tv_sec = 0;
-	its.it_interval.tv_nsec = 0;
-	its.it_value.tv_sec = 0;
-	its.it_value.tv_nsec = 0;
-	timerfd_settime(input->repeat_timer_fd, 0, &its, NULL);
+	evtimer_del(input->repeat_timer_ev);
 
 	if (!window)
 		return;
@@ -2795,18 +2779,17 @@ input_remove_keyboard_focus(struct input *input)
 }
 
 static void
-keyboard_repeat_func(struct task *task, uint32_t events)
+keyboard_repeat_func(evutil_socket_t fd, short what, void *arg)
 {
+	struct task *task = (struct task *)arg;
 	struct input *input =
 		container_of(task, struct input, repeat_task);
 	struct window *window = input->keyboard_focus;
-	uint64_t exp;
+	struct timeval tv;
 
-	if (read(input->repeat_timer_fd, &exp, sizeof exp) != sizeof exp)
-		/* If we change the timer between the fd becoming
-		 * readable and getting here, there'll be nothing to
-		 * read and we get EAGAIN. */
-		return;
+	tv.tv_sec = input->repeat_rate_sec;
+	tv.tv_usec = input->repeat_rate_nsec / 1000;
+	evtimer_add(input->repeat_timer_ev, &tv);
 
 	if (window && window->key_handler) {
 		(*window->key_handler)(window, input, input->repeat_time,
@@ -2911,7 +2894,7 @@ keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
 	enum wl_keyboard_key_state state = state_w;
 	const xkb_keysym_t *syms;
 	xkb_keysym_t sym;
-	struct itimerspec its;
+	struct timeval tv;
 
 	input->display->serial = serial;
 	code = key + 8;
@@ -2951,21 +2934,28 @@ keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
 
 	if (state == WL_KEYBOARD_KEY_STATE_RELEASED &&
 	    key == input->repeat_key) {
-		its.it_interval.tv_sec = 0;
-		its.it_interval.tv_nsec = 0;
-		its.it_value.tv_sec = 0;
-		its.it_value.tv_nsec = 0;
-		timerfd_settime(input->repeat_timer_fd, 0, &its, NULL);
+		evtimer_del(input->repeat_timer_ev);
 	} else if (state == WL_KEYBOARD_KEY_STATE_PRESSED &&
 		   xkb_keymap_key_repeats(input->xkb.keymap, code)) {
 		input->repeat_sym = sym;
 		input->repeat_key = key;
 		input->repeat_time = time;
+		if (input->repeat_delay_sec == 0 &&
+		    input->repeat_delay_nsec / 1000 == 0) {
+			tv.tv_sec = input->repeat_rate_sec;
+			tv.tv_usec = input->repeat_rate_nsec / 1000;
+		} else {
+			tv.tv_sec = input->repeat_delay_sec;
+			tv.tv_usec = input->repeat_delay_nsec / 1000;
+		}
+		evtimer_add(input->repeat_timer_ev, &tv);
+#if 0
 		its.it_interval.tv_sec = input->repeat_rate_sec;
 		its.it_interval.tv_nsec = input->repeat_rate_nsec;
 		its.it_value.tv_sec = input->repeat_delay_sec;
 		its.it_value.tv_nsec = input->repeat_delay_nsec;
 		timerfd_settime(input->repeat_timer_fd, 0, &its, NULL);
+#endif
 	}
 }
 
@@ -3299,6 +3289,8 @@ struct data_offer {
 	data_func_t func;
 	int32_t x, y;
 	void *user_data;
+
+	struct event *ev;
 };
 
 static void
@@ -3609,8 +3601,9 @@ input_accept(struct input *input, const char *type)
 }
 
 static void
-offer_io_func(struct task *task, uint32_t events)
+offer_io_func(evutil_socket_t fd, short what, void *arg)
 {
+	struct task *task = (struct task *)arg;
 	struct data_offer *offer =
 		container_of(task, struct data_offer, io_task);
 	unsigned int len;
@@ -3651,8 +3644,8 @@ data_offer_receive_data(struct data_offer *offer, const char *mime_type,
 	offer->refcount++;
 	offer->user_data = user_data;
 
-	display_watch_fd(offer->input->display,
-			 offer->fd, EPOLLIN, &offer->io_task);
+	offer->ev = display_watch_fd(offer->input->display,
+				     offer->fd, EV_READ, &offer->io_task);
 }
 
 void
@@ -4177,8 +4170,9 @@ surface_redraw(struct surface *surface)
 }
 
 static void
-idle_redraw(struct task *task, uint32_t events)
+idle_redraw(evutil_socket_t fd, short what, void *arg)
 {
+	struct task *task = (struct task *)arg;
 	struct window *window = container_of(task, struct window, redraw_task);
 	struct surface *surface;
 	int failed = 0;
@@ -5138,11 +5132,8 @@ display_add_input(struct display *d, uint32_t id)
 
 	set_repeat_info(input, 40, 400);
 
-	input->repeat_timer_fd = timerfd_create(CLOCK_MONOTONIC,
-						TFD_CLOEXEC | TFD_NONBLOCK);
-	input->repeat_task.run = keyboard_repeat_func;
-	display_watch_fd(d, input->repeat_timer_fd,
-			 EPOLLIN, &input->repeat_task);
+	input->repeat_timer_ev = evtimer_new(d->evbase, keyboard_repeat_func,
+					     &input->repeat_task);
 }
 
 static void
@@ -5173,7 +5164,7 @@ input_destroy(struct input *input)
 
 	wl_list_remove(&input->link);
 	wl_seat_destroy(input->seat);
-	close(input->repeat_timer_fd);
+	event_free(input->repeat_timer_ev);
 	free(input);
 }
 
@@ -5402,35 +5393,38 @@ init_dummy_surface(struct display *display)
 }
 
 static void
-handle_display_data(struct task *task, uint32_t events)
+handle_display_data(evutil_socket_t fd, short what, void *arg)
 {
+	struct task *task = (struct task *)arg;
 	struct display *display =
 		container_of(task, struct display, display_task);
-	struct epoll_event ep;
 	int ret;
 
+#if 0
 	display->display_fd_events = events;
 
 	if (events & EPOLLERR || events & EPOLLHUP) {
 		display_exit(display);
 		return;
 	}
+#endif
 
-	if (events & EPOLLIN) {
+	if (what & EV_READ) {
 		ret = wl_display_dispatch(display->display);
-		if (ret == -1) {
+		if (ret <= 0) {
 			display_exit(display);
 			return;
 		}
 	}
 
-	if (events & EPOLLOUT) {
+	if (what & EV_WRITE) {
 		ret = wl_display_flush(display->display);
 		if (ret == 0) {
-			ep.events = EPOLLIN | EPOLLERR | EPOLLHUP;
-			ep.data.ptr = &display->display_task;
-			epoll_ctl(display->epoll_fd, EPOLL_CTL_MOD,
-				  display->display_fd, &ep);
+			event_free(display->display_ev);
+			display->display_ev = event_new(display->evbase,
+			    display->display_fd, EV_PERSIST|EV_READ,
+			    handle_display_data, &display->display_task);
+			event_add(display->display_ev, NULL);
 		} else if (ret == -1 && errno != EAGAIN) {
 			display_exit(display);
 			return;
@@ -5469,12 +5463,12 @@ display_create(int *argc, char *argv[])
 		return NULL;
 	}
 
+//	d->epoll_fd = os_epoll_create_cloexec();
 	d->evbase = event_base_new();
-	d->epoll_fd = os_epoll_create_cloexec();
 	d->display_fd = wl_display_get_fd(d->display);
 	d->display_task.run = handle_display_data;
-	display_watch_fd(d, d->display_fd, EPOLLIN | EPOLLERR | EPOLLHUP,
-			 &d->display_task);
+	d->display_ev = event_new(d->evbase, d->display_fd, EV_PERSIST|EV_READ,
+				  handle_display_data, &d->display_task);
 
 	wl_list_init(&d->deferred_list);
 	wl_list_init(&d->input_list);
@@ -5570,11 +5564,13 @@ display_destroy(struct display *display)
 	wl_compositor_destroy(display->compositor);
 	wl_registry_destroy(display->registry);
 
-	close(display->epoll_fd);
+	event_base_free(display->evbase);
 
+#if 0
 	if (!(display->display_fd_events & EPOLLERR) &&
 	    !(display->display_fd_events & EPOLLHUP))
 		wl_display_flush(display->display);
+#endif
 
 	wl_display_disconnect(display->display);
 	free(display);
@@ -5686,7 +5682,8 @@ display_defer(struct display *display, struct task *task)
 	wl_list_insert(&display->deferred_list, &task->link);
 }
 
-void
+#if 0
+struct event *
 display_watch_fd(struct display *display,
 		 int fd, uint32_t events, struct task *task)
 {
@@ -5702,13 +5699,15 @@ display_unwatch_fd(struct display *display, int fd)
 {
 	epoll_ctl(display->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
 }
+#endif
 
 void
 display_run(struct display *display)
 {
 	struct task *task;
-	struct epoll_event ep[16];
-	int i, count, ret;
+//	struct epoll_event ep[16];
+//	int count, i;
+	int ret;
 
 	display->running = 1;
 	while (1) {
@@ -5716,7 +5715,7 @@ display_run(struct display *display)
 			task = container_of(display->deferred_list.prev,
 					    struct task, link);
 			wl_list_remove(&task->link);
-			task->run(task, 0);
+			task->run(0, 0, task);
 		}
 
 		wl_display_dispatch_pending(display->display);
@@ -5726,22 +5725,19 @@ display_run(struct display *display)
 
 		ret = wl_display_flush(display->display);
 		if (ret < 0 && errno == EAGAIN) {
+#if 0
 			ep[0].events =
 				EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP;
 			ep[0].data.ptr = &display->display_task;
 
 			epoll_ctl(display->epoll_fd, EPOLL_CTL_MOD,
 				  display->display_fd, &ep[0]);
+#endif
 		} else if (ret < 0) {
 			break;
 		}
 
-		count = epoll_wait(display->epoll_fd,
-				   ep, ARRAY_LENGTH(ep), -1);
-		for (i = 0; i < count; i++) {
-			task = ep[i].data.ptr;
-			task->run(task, ep[i].events);
-		}
+		event_base_loop(display->evbase, EVLOOP_ONCE);
 	}
 }
 
@@ -5800,7 +5796,7 @@ void *
 fail_on_null(void *p)
 {
 	if (p == NULL) {
-		fprintf(stderr, "%s: out of memory\n", program_invocation_short_name);
+		warnx("out of memory");
 		exit(EXIT_FAILURE);
 	}
 

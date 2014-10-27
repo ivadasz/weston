@@ -4160,11 +4160,15 @@ weston_compositor_set_presentation_clock_software(
 {
 	/* In order of preference */
 	static const clockid_t clocks[] = {
+#if 0
 		CLOCK_MONOTONIC_RAW,	/* no jumps, no crawling */
 		CLOCK_MONOTONIC_COARSE,	/* no jumps, may crawl, fast & coarse */
+#endif
 		CLOCK_MONOTONIC,	/* no jumps, may crawl */
+#if 0
 		CLOCK_REALTIME_COARSE,	/* may jump and crawl, fast & coarse */
 		CLOCK_REALTIME		/* may jump and crawl */
+#endif
 	};
 	unsigned i;
 
@@ -4190,12 +4194,16 @@ static const char *
 clock_name(clockid_t clk_id)
 {
 	static const char *names[] = {
+#if 0
 		[CLOCK_REALTIME] =		"CLOCK_REALTIME",
+#endif
 		[CLOCK_MONOTONIC] =		"CLOCK_MONOTONIC",
+#if 0
 		[CLOCK_MONOTONIC_RAW] =		"CLOCK_MONOTONIC_RAW",
 		[CLOCK_REALTIME_COARSE] =	"CLOCK_REALTIME_COARSE",
 		[CLOCK_MONOTONIC_COARSE] =	"CLOCK_MONOTONIC_COARSE",
 		[CLOCK_BOOTTIME] =		"CLOCK_BOOTTIME",
+#endif
 	};
 
 	if (clk_id < 0 || (unsigned)clk_id >= ARRAY_LENGTH(names))
