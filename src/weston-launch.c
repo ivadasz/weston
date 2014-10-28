@@ -33,7 +33,7 @@
 #include <poll.h>
 #include <errno.h>
 
-#include <error.h>
+#include <err.h>
 #include <getopt.h>
 
 #include <sys/types.h>
@@ -41,14 +41,19 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
-#include <sys/signalfd.h>
+//#include <sys/signalfd.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
 
+#ifdef __DragonFly__
+#include <sys/consio.h>
+#include <sys/kbio.h>
+#else
 #include <linux/vt.h>
 #include <linux/major.h>
 #include <linux/kd.h>
+#endif
 
 #include <pwd.h>
 #include <grp.h>
@@ -229,7 +234,7 @@ setup_launcher_socket(struct weston_launch *wl)
 		error(1, errno, "socketpair failed");
 
 	if (fcntl(wl->sock[0], F_SETFD, FD_CLOEXEC) < 0)
-		error(1, errno, "fcntl failed");
+		err(1, "fcntl failed");
 
 	return 0;
 }

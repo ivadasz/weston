@@ -5375,15 +5375,19 @@ do_shell_fade_startup(void *data)
 {
 	struct desktop_shell *shell = data;
 
+#if 0
 	if (shell->startup_animation_type == ANIMATION_FADE) {
 		shell_fade(shell, FADE_IN);
 	} else {
 		weston_log("desktop shell: "
 			   "unexpected fade-in animation type %d\n",
 			   shell->startup_animation_type);
+#endif
 		weston_surface_destroy(shell->fade.view->surface);
 		shell->fade.view = NULL;
+#if 0
 	}
+#endif
 }
 
 static void

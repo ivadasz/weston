@@ -33,7 +33,7 @@
 #include <math.h>
 #include <sys/time.h>
 #include <cairo.h>
-#include <sys/epoll.h>
+//#include <sys/epoll.h>
 #include <stdbool.h>
 
 #include <wayland-client.h>

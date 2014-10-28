@@ -372,6 +372,7 @@ x11_output_repaint_gl(struct weston_output *output_base,
 	pixman_region32_subtract(&ec->primary_plane.damage,
 				 &ec->primary_plane.damage, damage);
 
+	fprintf(stderr, "%s: calling wl_event_source_timer_update(..., 10)\n", __func__);
 	wl_event_source_timer_update(output->finish_frame_timer, 10);
 	return 0;
 }
@@ -438,6 +439,8 @@ x11_output_repaint_shm(struct weston_output *output_base,
 	xcb_void_cookie_t cookie;
 	xcb_generic_error_t *err;
 
+//	fprintf(stderr, "%s: called\n", __func__);
+
 	pixman_renderer_output_set_buffer(output_base, output->hw_surface);
 	ec->renderer->repaint_output(output_base, damage);
 
@@ -458,6 +461,7 @@ x11_output_repaint_shm(struct weston_output *output_base,
 		free(err);
 	}
 
+//	fprintf(stderr, "%s: calling wl_event_source_timer_update(..., 10)\n", __func__);
 	wl_event_source_timer_update(output->finish_frame_timer, 10);
 	return 0;
 }
@@ -468,8 +472,12 @@ finish_frame_handler(void *data)
 	struct x11_output *output = data;
 	struct timespec ts;
 
+#if 1
 	weston_compositor_read_presentation_clock(output->base.compositor, &ts);
 	weston_output_finish_frame(&output->base, &ts, 0);
+#else
+	x11_output_start_repaint_loop(&output->base);
+#endif
 
 	return 1;
 }
@@ -499,6 +507,7 @@ x11_output_destroy(struct weston_output *output_base)
 	struct x11_backend *backend =
 		(struct x11_backend *)output->base.compositor->backend;
 
+	fprintf(stderr, "%s: calling wl_event_source_remove(output->finish_frame_timer)\n", __func__);
 	wl_event_source_remove(output->finish_frame_timer);
 
 	if (backend->use_pixman) {
@@ -1383,6 +1392,7 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 		count++;
 		if (prev != event)
 			free (event);
+		break;
 	}
 
 	switch (prev ? prev->response_type & ~0x80 : 0x80) {

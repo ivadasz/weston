@@ -34,8 +34,13 @@
 #include <math.h>
 #include <cairo.h>
 #include <sys/wait.h>
+#ifndef __DragonFly__
 #include <sys/timerfd.h>
 #include <sys/epoll.h>
+#else
+//#include <sys/timerfd.h>
+//#include <sys/epoll.h>
+#endif
 #include <linux/input.h>
 #include <libgen.h>
 #include <ctype.h>
@@ -122,7 +127,7 @@ struct panel_clock {
 	struct widget *widget;
 	struct panel *panel;
 	struct task clock_task;
-	int clock_fd;
+	struct event *clockev;
 };
 
 struct unlock_dialog {
@@ -333,14 +338,12 @@ panel_launcher_touch_up_handler(struct widget *widget, struct input *input,
 }
 
 static void
-clock_func(struct task *task, uint32_t events)
+clock_func(evutil_socket_t fd, short what, void *arg)
 {
+	struct task *task = (struct task *)arg;
 	struct panel_clock *clock =
 		container_of(task, struct panel_clock, clock_task);
-	uint64_t exp;
 
-	if (read(clock->clock_fd, &exp, sizeof exp) != sizeof exp)
-		abort();
 	widget_schedule_redraw(clock->widget);
 }
 
@@ -385,16 +388,12 @@ panel_clock_redraw_handler(struct widget *widget, void *data)
 static int
 clock_timer_reset(struct panel_clock *clock)
 {
-	struct itimerspec its;
+	struct timeval tv;
 
-	its.it_interval.tv_sec = 60;
-	its.it_interval.tv_nsec = 0;
-	its.it_value.tv_sec = 60;
-	its.it_value.tv_nsec = 0;
-	if (timerfd_settime(clock->clock_fd, 0, &its, NULL) < 0) {
-		fprintf(stderr, "could not set timerfd\n: %m");
-		return -1;
-	}
+	tv.tv_sec = 60;
+	tv.tv_usec = 0;
+
+	event_add(clock->clockev, &tv);
 
 	return 0;
 }
@@ -404,7 +403,7 @@ panel_destroy_clock(struct panel_clock *clock)
 {
 	widget_destroy(clock->widget);
 
-	close(clock->clock_fd);
+	event_free(clock->clockev);
 
 	free(clock);
 }
@@ -413,22 +412,14 @@ static void
 panel_add_clock(struct panel *panel)
 {
 	struct panel_clock *clock;
-	int timerfd;
-
-	timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
-	if (timerfd < 0) {
-		fprintf(stderr, "could not create timerfd\n: %m");
-		return;
-	}
 
 	clock = xzalloc(sizeof *clock);
 	clock->panel = panel;
 	panel->clock = clock;
-	clock->clock_fd = timerfd;
-
 	clock->clock_task.run = clock_func;
-	display_watch_fd(window_get_display(panel->window), clock->clock_fd,
-			 EPOLLIN, &clock->clock_task);
+	clock->clockev = display_add_periodic_timer(
+	    window_get_display(panel->window), &clock->clock_task);
+
 	clock_timer_reset(clock);
 
 	clock->widget = widget_add_widget(panel->widget, clock);
@@ -900,8 +891,9 @@ unlock_dialog_destroy(struct unlock_dialog *dialog)
 }
 
 static void
-unlock_dialog_finish(struct task *task, uint32_t events)
+unlock_dialog_finish(evutil_socket_t fd, short what, void *arg)
 {
+	struct task *task = (struct task *)arg;
 	struct desktop *desktop =
 		container_of(task, struct desktop, unlock_task);
 
@@ -1009,6 +1001,7 @@ background_create(struct desktop *desktop)
 	struct background *background;
 	struct weston_config_section *s;
 	char *type;
+	extern char *__progname;
 
 	background = xzalloc(sizeof *background);
 	background->base.configure = background_configure;
@@ -1029,7 +1022,7 @@ background_create(struct desktop *desktop)
 	weston_config_section_get_string(s, "background-type",
 					 &type, "tile");
 	if (type == NULL) {
-		fprintf(stderr, "%s: out of memory\n", program_invocation_short_name);
+		fprintf(stderr, "%s: out of memory\n", __progname);
 		exit(EXIT_FAILURE);
 	}
 

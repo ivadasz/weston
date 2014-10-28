@@ -83,11 +83,11 @@ static void *
 xmalloc(size_t size)
 {
 	void *p;
+	extern char *__progname;
 
 	p = malloc(size);
 	if (p == NULL) {
-		fprintf(stderr, "%s: out of memory\n",
-			program_invocation_short_name);
+		fprintf(stderr, "%s: out of memory\n", __progname);
 		exit(EXIT_FAILURE);
 	}
 
@@ -266,11 +266,12 @@ int main(int argc, char *argv[])
 	struct wl_registry *registry;
 	struct screenshooter_output *output;
 	int width, height;
+	extern char *__progname;
 
 	if (getenv("WAYLAND_SOCKET") == NULL) {
 		fprintf(stderr, "%s must be launched by weston.\n"
 			"Use the MOD+S shortcut to take a screenshot.\n",
-			program_invocation_short_name);
+			__progname);
 		return -1;
 	}
 

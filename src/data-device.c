@@ -348,7 +348,7 @@ drag_grab_motion(struct weston_pointer_grab *grab, uint32_t time,
 		fx = wl_fixed_to_double(pointer->x) + drag->base.dx;
 		fy = wl_fixed_to_double(pointer->y) + drag->base.dy;
 		weston_view_set_position(drag->base.icon, fx, fy);
-		weston_view_schedule_repaint(drag->base.icon);
+//		weston_view_schedule_repaint(drag->base.icon);
 	}
 
 	if (drag->base.focus_resource) {
@@ -496,7 +496,7 @@ drag_grab_touch_motion(struct weston_touch_grab *grab, uint32_t time,
 		fx = wl_fixed_to_double(touch->grab_x) + touch_drag->base.dx;
 		fy = wl_fixed_to_double(touch->grab_y) + touch_drag->base.dy;
 		weston_view_set_position(touch_drag->base.icon, fx, fy);
-		weston_view_schedule_repaint(touch_drag->base.icon);
+//		weston_view_schedule_repaint(touch_drag->base.icon);
 	}
 
 	if (touch_drag->base.focus_resource) {

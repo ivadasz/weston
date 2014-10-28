@@ -32,10 +32,14 @@
 #include <unistd.h>
 #include <math.h>
 #include <time.h>
+#ifdef __DragonFly__
+#include <libutil.h>
+#else
 #include <pty.h>
+#endif
 #include <ctype.h>
 #include <cairo.h>
-#include <sys/epoll.h>
+//#include <sys/epoll.h>
 #include <wchar.h>
 #include <locale.h>
 
@@ -454,6 +458,7 @@ struct terminal {
 	int scrolling;
 	int send_cursor_position;
 	int fd, master;
+	struct event *masterev;
 	uint32_t modifiers;
 	char escape[MAX_ESCAPE+1];
 	int escape_length;
@@ -2985,7 +2990,8 @@ terminal_create(struct display *display)
 static void
 terminal_destroy(struct terminal *terminal)
 {
-	display_unwatch_fd(terminal->display, terminal->master);
+	event_free(terminal->masterev);
+//	display_unwatch_fd(terminal->display, terminal->master);
 	window_destroy(terminal->window);
 	close(terminal->master);
 	wl_list_remove(&terminal->link);
@@ -2998,20 +3004,23 @@ terminal_destroy(struct terminal *terminal)
 }
 
 static void
-io_handler(struct task *task, uint32_t events)
+io_handler(evutil_socket_t fd, short what, void *arg)
 {
+	struct task *task = (struct task *)arg;
 	struct terminal *terminal =
 		container_of(task, struct terminal, io_task);
 	char buffer[256];
 	int len;
 
+#if 0
 	if (events & EPOLLHUP) {
 		terminal_destroy(terminal);
 		return;
 	}
+#endif
 
 	len = read(terminal->master, buffer, sizeof buffer);
-	if (len < 0)
+	if (len <= 0)
 		terminal_destroy(terminal);
 	else
 		terminal_data(terminal, buffer, len);
@@ -3039,8 +3048,8 @@ terminal_run(struct terminal *terminal, const char *path)
 	terminal->master = master;
 	fcntl(master, F_SETFL, O_NONBLOCK);
 	terminal->io_task.run = io_handler;
-	display_watch_fd(terminal->display, terminal->master,
-			 EPOLLIN | EPOLLHUP, &terminal->io_task);
+	terminal->masterev = display_watch_fd(terminal->display,
+	    terminal->master, EV_PERSIST|EV_READ, &terminal->io_task);
 
 	if (option_fullscreen)
 		window_set_fullscreen(terminal->window, 1);

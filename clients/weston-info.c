@@ -118,8 +118,10 @@ struct weston_info {
 static void *
 fail_on_null(void *p)
 {
+	extern char *__progname;
+
 	if (p == NULL) {
-		fprintf(stderr, "%s: out of memory\n", program_invocation_short_name);
+		fprintf(stderr, "%s: out of memory\n", __progname);
 		exit(EXIT_FAILURE);
 	}
 
@@ -574,12 +576,16 @@ static const char *
 clock_name(clockid_t clk_id)
 {
 	static const char *names[] = {
+#if 0
 		[CLOCK_REALTIME] =		"CLOCK_REALTIME",
+#endif
 		[CLOCK_MONOTONIC] =		"CLOCK_MONOTONIC",
+#if 0
 		[CLOCK_MONOTONIC_RAW] =		"CLOCK_MONOTONIC_RAW",
 		[CLOCK_REALTIME_COARSE] =	"CLOCK_REALTIME_COARSE",
 		[CLOCK_MONOTONIC_COARSE] =	"CLOCK_MONOTONIC_COARSE",
 		[CLOCK_BOOTTIME] =		"CLOCK_BOOTTIME",
+#endif
 	};
 
 	if (clk_id < 0 || (unsigned)clk_id >= ARRAY_LENGTH(names))

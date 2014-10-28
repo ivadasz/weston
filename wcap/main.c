@@ -60,6 +60,8 @@ rgb_to_yuv(uint32_t format, uint32_t p, int *u, int *v)
 {
 	int r, g, b, y;
 
+	r = g = b = y = 0;
+
 	switch (format) {
 	case WCAP_FORMAT_XRGB8888:
 		r = (p >> 16) & 0xff;

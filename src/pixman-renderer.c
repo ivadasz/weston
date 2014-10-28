@@ -521,9 +521,25 @@ repaint_surfaces(struct weston_output *output, pixman_region32_t *damage)
 	struct weston_compositor *compositor = output->compositor;
 	struct weston_view *view;
 
-	wl_list_for_each_reverse(view, &compositor->view_list, link)
-		if (view->plane == &compositor->primary_plane)
+//	fprintf(stderr, "%s: running\n", __func__);
+
+	int i = 0, j = 0;
+	wl_list_for_each_reverse(view, &compositor->view_list, link) {
+		if (view->plane == &compositor->primary_plane) {
+			i++;
+		}
+	}
+	wl_list_for_each_reverse(view, &compositor->view_list, link) {
+		if (view->plane == &compositor->primary_plane) {
+			j++;
+//			if (j < i){
+//			fprintf(stderr, "%s: drawing view\n", __func__);
 			draw_view(view, output, damage);
+//			}
+		}
+	}
+
+//	fprintf(stderr, "%s: finished\n", __func__);
 }
 
 static void
@@ -562,13 +578,20 @@ pixman_renderer_repaint_output(struct weston_output *output,
 	if (!po->hw_buffer)
 		return;
 
+//	fprintf(stderr, "%s: running\n", __func__);
+
 	repaint_surfaces(output, output_damage);
+//	fprintf(stderr, "%s: calling copy_to_hw_buffer\n", __func__);
 	copy_to_hw_buffer(output, output_damage);
 
+//	fprintf(stderr, "%s: calling pixman_region32_copy\n", __func__);
 	pixman_region32_copy(&output->previous_damage, output_damage);
+//	fprintf(stderr, "%s: calling wl_signal_emit\n", __func__);
 	wl_signal_emit(&output->frame_signal, output);
 
 	/* Actual flip should be done by caller */
+
+//	fprintf(stderr, "%s: finished\n", __func__);
 }
 
 static void
