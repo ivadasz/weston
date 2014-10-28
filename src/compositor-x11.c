@@ -1158,6 +1158,7 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 	prev = NULL;
 	count = 0;
 	while (x11_compositor_next_event(c, &event, mask)) {
+		mask &= ~WL_EVENT_READABLE;
 		response_type = event->response_type & ~0x80;
 
 		switch (prev ? prev->response_type & ~0x80 : 0x80) {
@@ -1324,7 +1325,7 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 		count++;
 		if (prev != event)
 			free (event);
-		break;
+//		break;
 	}
 
 	switch (prev ? prev->response_type & ~0x80 : 0x80) {
