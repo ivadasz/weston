@@ -85,10 +85,11 @@ static inline void *
 xzalloc(size_t s)
 {
 	void *p;
+	extern char *__progname;
 
 	p = calloc(1, s);
 	if (p == NULL) {
-		fprintf(stderr, "%s: out of memory\n", program_invocation_short_name);
+		fprintf(stderr, "%s: out of memory\n", __progname);
 		exit(EXIT_FAILURE);
 	}
 
