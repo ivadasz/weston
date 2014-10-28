@@ -430,11 +430,23 @@ weston_wm_send_data(struct weston_wm *wm, xcb_atom_t target, const char *mime_ty
 	struct weston_seat *seat = weston_wm_pick_seat(wm);
 	int p[2];
 
+#if defined(__DragonFly__)
+	if (pipe(p) == -1) {
+		weston_log("pipe failed: %m\n");
+		weston_wm_send_selection_notify(wm, XCB_ATOM_NONE);
+		return;
+	}
+	fcntl(p[0], F_SETFD, FD_CLOEXEC);
+	fcntl(p[1], F_SETFD, FD_CLOEXEC);
+	fcntl(p[0], F_SETFL, O_NONBLOCK);
+	fcntl(p[1], F_SETFL, O_NONBLOCK);
+#else
 	if (pipe2(p, O_CLOEXEC | O_NONBLOCK) == -1) {
 		weston_log("pipe2 failed: %m\n");
 		weston_wm_send_selection_notify(wm, XCB_ATOM_NONE);
 		return;
 	}
+#endif
 
 	wl_array_init(&wm->source_data);
 	wm->selection_target = target;
