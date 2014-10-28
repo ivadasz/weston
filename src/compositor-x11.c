@@ -1392,7 +1392,7 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 		count++;
 		if (prev != event)
 			free (event);
-		break;
+//		break;
 	}
 
 	switch (prev ? prev->response_type & ~0x80 : 0x80) {
