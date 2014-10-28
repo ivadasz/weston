@@ -5107,12 +5107,12 @@ do_shell_fade_startup(void *data)
 {
 	struct desktop_shell *shell = data;
 
-	if (shell->startup_animation_type == ANIMATION_FADE)
-		shell_fade(shell, FADE_IN);
-	else if (shell->startup_animation_type == ANIMATION_NONE) {
+//	if (shell->startup_animation_type == ANIMATION_FADE)
+//		shell_fade(shell, FADE_IN);
+//	else if (shell->startup_animation_type == ANIMATION_NONE) {
 		weston_surface_destroy(shell->fade.view->surface);
 		shell->fade.view = NULL;
-	}
+//	}
 }
 
 static void

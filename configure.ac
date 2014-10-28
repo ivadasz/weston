@@ -290,11 +290,11 @@ fi
 AM_CONDITIONAL(ENABLE_VAAPI_RECORDER, test "x$have_libva" = xyes)
 
 
-#AC_CHECK_LIB([jpeg], [jpeg_CreateDecompress], have_jpeglib=yes)
+AC_CHECK_LIB([jpeg], [jpeg_CreateDecompress], have_jpeglib=yes)
 if test x$have_jpeglib = xyes; then
   JPEG_LIBS="-ljpeg"
-#else
-#  AC_ERROR([libjpeg not found])
+else
+  AC_ERROR([libjpeg not found])
 fi
 AC_SUBST(JPEG_LIBS)
 

@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include <xkbcommon/xkbcommon.h>
+#include <event2/event.h>
 #include <wayland-client.h>
 #include <cairo.h>
 #include "../shared/config-parser.h"
@@ -167,8 +168,14 @@ void
 display_defer(struct display *display, struct task *task);
 
 struct event *
+display_add_periodic_timer(struct display *display, struct task *task);
+
+struct event *
+display_add_oneshot_timer(struct display *display, struct task *task);
+
+struct event *
 display_watch_fd(struct display *display,
-		 int fd, uint32_t events, struct task *task);
+		 int fd, short what, struct task *task);
 
 void
 display_unwatch_fd(struct display *display, int fd);

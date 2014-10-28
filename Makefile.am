@@ -457,7 +457,7 @@ libtoytoolkit_la_LIBADD =			\
 libtoytoolkit_la_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS) $(CAIRO_EGL_CFLAGS)
 
 weston_flower_SOURCES = clients/flower.c
-weston_flower_LDADD = libtoytoolkit.la
+weston_flower_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_flower_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_screenshooter_SOURCES =				\
@@ -469,11 +469,11 @@ weston_screenshooter_LDADD = $(CLIENT_LIBS) libshared.la
 weston_screenshooter_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_terminal_SOURCES = clients/terminal.c
-weston_terminal_LDADD = libtoytoolkit.la -lutil
+weston_terminal_LDADD = $(JPEG_LIBS) libtoytoolkit.la -lutil
 weston_terminal_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_image_SOURCES = clients/image.c
-weston_image_LDADD = libtoytoolkit.la
+weston_image_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_image_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_cliptest_SOURCES =				\
@@ -481,22 +481,22 @@ weston_cliptest_SOURCES =				\
 	src/vertex-clipping.c				\
 	src/vertex-clipping.h
 weston_cliptest_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-weston_cliptest_LDADD = libtoytoolkit.la
+weston_cliptest_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 
 weston_dnd_SOURCES = clients/dnd.c
-weston_dnd_LDADD = libtoytoolkit.la
+weston_dnd_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_dnd_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_smoke_SOURCES = clients/smoke.c
-weston_smoke_LDADD = libtoytoolkit.la
+weston_smoke_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_smoke_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_resizor_SOURCES = clients/resizor.c
-weston_resizor_LDADD = libtoytoolkit.la
+weston_resizor_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_resizor_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_scaler_SOURCES = clients/scaler.c
-weston_scaler_LDADD = libtoytoolkit.la
+weston_scaler_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_scaler_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 if HAVE_CAIRO_GLESV2
@@ -512,32 +512,32 @@ weston_nested_client_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 endif
 
 weston_eventdemo_SOURCES = clients/eventdemo.c
-weston_eventdemo_LDADD = libtoytoolkit.la
+weston_eventdemo_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_eventdemo_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_clickdot_SOURCES = clients/clickdot.c
-weston_clickdot_LDADD = libtoytoolkit.la
+weston_clickdot_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_clickdot_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_transformed_SOURCES = clients/transformed.c
-weston_transformed_LDADD = libtoytoolkit.la
+weston_transformed_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_transformed_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_fullscreen_SOURCES = clients/fullscreen.c
 nodist_weston_fullscreen_SOURCES =			\
 	protocol/fullscreen-shell-protocol.c		\
 	protocol/fullscreen-shell-client-protocol.h
-weston_fullscreen_LDADD = libtoytoolkit.la
+weston_fullscreen_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_fullscreen_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_stacking_SOURCES = clients/stacking.c
-weston_stacking_LDADD = libtoytoolkit.la
+weston_stacking_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_stacking_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_calibrator_SOURCES = clients/calibrator.c	\
 	shared/matrix.c					\
 	shared/matrix.h
-weston_calibrator_LDADD = libtoytoolkit.la
+weston_calibrator_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_calibrator_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 if BUILD_SUBSURFACES_CLIENT
@@ -556,7 +556,7 @@ weston_editor_SOURCES = clients/editor.c
 nodist_weston_editor_SOURCES =			\
 	protocol/text-protocol.c		\
 	protocol/text-client-protocol.h
-weston_editor_LDADD = libtoytoolkit.la $(PANGO_LIBS)
+weston_editor_LDADD = $(JPEG_LIBS) libtoytoolkit.la $(PANGO_LIBS)
 weston_editor_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS) $(PANGO_CFLAGS)
 endif
 
@@ -566,7 +566,7 @@ nodist_weston_keyboard_SOURCES =			\
 	protocol/desktop-shell-protocol.c		\
 	protocol/input-method-protocol.c		\
 	protocol/input-method-client-protocol.h
-weston_keyboard_LDADD = libtoytoolkit.la
+weston_keyboard_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_keyboard_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_simple_im_SOURCES = clients/weston-simple-im.c
@@ -587,7 +587,7 @@ weston_desktop_shell_SOURCES = clients/desktop-shell.c
 nodist_weston_desktop_shell_SOURCES =			\
 	protocol/desktop-shell-client-protocol.h	\
 	protocol/desktop-shell-protocol.c
-weston_desktop_shell_LDADD = libtoytoolkit.la
+weston_desktop_shell_LDADD = $(JPEG_LIBS) libtoytoolkit.la
 weston_desktop_shell_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 if BUILD_FULL_GL_CLIENTS

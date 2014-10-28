@@ -340,8 +340,11 @@ x11_output_start_repaint_loop(struct weston_output *output)
 {
 	struct timespec ts;
 
+//	fprintf(stderr, "%s: calling clock_gettime\n", __func__);
 	clock_gettime(output->compositor->presentation_clock, &ts);
+//	fprintf(stderr, "%s: calling weston_output_finish_frame\n", __func__);
 	weston_output_finish_frame(output, &ts);
+//	fprintf(stderr, "%s: done\n", __func__);
 }
 
 static int
@@ -356,6 +359,7 @@ x11_output_repaint_gl(struct weston_output *output_base,
 	pixman_region32_subtract(&ec->primary_plane.damage,
 				 &ec->primary_plane.damage, damage);
 
+	fprintf(stderr, "%s: calling wl_event_source_timer_update(..., 10)\n", __func__);
 	wl_event_source_timer_update(output->finish_frame_timer, 10);
 	return 0;
 }
@@ -422,6 +426,8 @@ x11_output_repaint_shm(struct weston_output *output_base,
 	xcb_void_cookie_t cookie;
 	xcb_generic_error_t *err;
 
+//	fprintf(stderr, "%s: called\n", __func__);
+
 	pixman_renderer_output_set_buffer(output_base, output->hw_surface);
 	ec->renderer->repaint_output(output_base, damage);
 
@@ -442,6 +448,7 @@ x11_output_repaint_shm(struct weston_output *output_base,
 		free(err);
 	}
 
+//	fprintf(stderr, "%s: calling wl_event_source_timer_update(..., 10)\n", __func__);
 	wl_event_source_timer_update(output->finish_frame_timer, 10);
 	return 0;
 }
@@ -451,7 +458,10 @@ finish_frame_handler(void *data)
 {
 	struct x11_output *output = data;
 
+//	fprintf(stderr, "%s: calling x11_output_start_repaint_loop\n", __func__);
 	x11_output_start_repaint_loop(&output->base);
+//	fprintf(stderr, "%s: calling wl_event_source_timer_update(..., 10)\n", __func__);
+//	wl_event_source_timer_update(output->finish_frame_timer, 10);
 
 	return 1;
 }
@@ -481,6 +491,7 @@ x11_output_destroy(struct weston_output *output_base)
 	struct x11_compositor *compositor =
 		(struct x11_compositor *)output->base.compositor;
 
+	fprintf(stderr, "%s: calling wl_event_source_remove(output->finish_frame_timer)\n", __func__);
 	wl_event_source_remove(output->finish_frame_timer);
 
 	if (compositor->use_pixman) {
@@ -1313,6 +1324,7 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 		count++;
 		if (prev != event)
 			free (event);
+		break;
 	}
 
 	switch (prev ? prev->response_type & ~0x80 : 0x80) {

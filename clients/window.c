@@ -707,9 +707,10 @@ make_shm_pool(struct display *display, int size, void **data)
 		return NULL;
 	}
 
+	fprintf(stderr, "%s: trying to mmap %d bytes\n", __func__, size);
 	*data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (*data == MAP_FAILED) {
-		fprintf(stderr, "mmap failed: %m\n");
+		warn("mmap failed");
 		close(fd);
 		return NULL;
 	}
@@ -859,6 +860,8 @@ display_create_shm_surface(struct display *display,
 		}
 	}
 
+	fprintf(stderr, "%s: rectangle: x:%d y:%d width:%d height: %d\n",
+	    __func__, rectangle->x, rectangle->y, rectangle->width, rectangle->height);
 	pool = shm_pool_create(display,
 			       data_length_for_shm_surface(rectangle));
 	if (!pool)
@@ -2790,13 +2793,13 @@ keyboard_repeat_func(evutil_socket_t fd, short what, void *arg)
 
 	tv.tv_sec = input->repeat_rate_sec;
 	tv.tv_usec = input->repeat_rate_nsec / 1000;
-	evtimer_add(input->repeat_timer_ev, &tv);
 
 	if (window && window->key_handler) {
 		(*window->key_handler)(window, input, input->repeat_time,
 				       input->repeat_key, input->repeat_sym,
 				       WL_KEYBOARD_KEY_STATE_PRESSED,
 				       window->user_data);
+		evtimer_add(input->repeat_timer_ev, &tv);
 	}
 }
 
@@ -5415,15 +5418,18 @@ handle_display_data(evutil_socket_t fd, short what, void *arg)
 	}
 #endif
 
+//	fprintf(stderr, "%s: what=%d\n", __func__, what);
 	if (what & EV_READ) {
+//		fprintf(stderr, "%s: calling wl_display_dispatch\n", __func__);
 		ret = wl_display_dispatch(display->display);
-		if (ret <= 0) {
+		if (ret < 0) {
 			display_exit(display);
 			return;
 		}
 	}
 
 	if (what & EV_WRITE) {
+//		fprintf(stderr, "%s: calling wl_display_flush\n", __func__);
 		ret = wl_display_flush(display->display);
 		if (ret == 0) {
 			event_free(display->display_ev);
@@ -5475,6 +5481,7 @@ display_create(int *argc, char *argv[])
 	d->display_task.run = handle_display_data;
 	d->display_ev = event_new(d->evbase, d->display_fd, EV_PERSIST|EV_READ,
 				  handle_display_data, &d->display_task);
+	event_add(d->display_ev, NULL);
 
 	wl_list_init(&d->deferred_list);
 	wl_list_init(&d->input_list);
@@ -5487,8 +5494,9 @@ display_create(int *argc, char *argv[])
 	d->registry = wl_display_get_registry(d->display);
 	wl_registry_add_listener(d->registry, &registry_listener, d);
 
+//	fprintf(stderr, "%s: calling wl_display_dispatch\n", __func__);
 	if (wl_display_dispatch(d->display) < 0) {
-		fprintf(stderr, "Failed to process Wayland connection: %m\n");
+//		fprintf(stderr, "Failed to process Wayland connection: %m\n");
 		return NULL;
 	}
 
@@ -5505,6 +5513,8 @@ display_create(int *argc, char *argv[])
 	wl_list_init(&d->window_list);
 
 	init_dummy_surface(d);
+
+//	fprintf(stderr, "%s: finished\n", __func__);
 
 	return d;
 }
@@ -5688,18 +5698,40 @@ display_defer(struct display *display, struct task *task)
 	wl_list_insert(&display->deferred_list, &task->link);
 }
 
-#if 0
-struct event *
-display_watch_fd(struct display *display,
-		 int fd, uint32_t events, struct task *task)
-{
-	struct epoll_event ep;
 
-	ep.events = events;
-	ep.data.ptr = task;
-	epoll_ctl(display->epoll_fd, EPOLL_CTL_ADD, fd, &ep);
+struct event *
+display_add_periodic_timer(struct display *display, struct task *task)
+{
+	struct event *ev;
+
+	ev = event_new(display->evbase, -1, EV_PERSIST, task->run, task);
+
+	return ev;
 }
 
+struct event *
+display_add_oneshot_timer(struct display *display, struct task *task)
+{
+	struct event *ev;
+
+	ev = event_new(display->evbase, -1, 0, task->run, task);
+
+	return ev;
+}
+
+struct event *
+display_watch_fd(struct display *display,
+		 int fd, short what, struct task *task)
+{
+	struct event *ev;
+
+	ev = event_new(display->evbase, fd, what, task->run, task);
+	event_add(ev, NULL);
+
+	return ev;
+}
+
+#if 0
 void
 display_unwatch_fd(struct display *display, int fd)
 {
@@ -5714,6 +5746,7 @@ display_run(struct display *display)
 //	struct epoll_event ep[16];
 //	int count, i;
 	int ret;
+	extern char *__progname;
 
 	display->running = 1;
 	while (1) {
@@ -5724,6 +5757,7 @@ display_run(struct display *display)
 			task->run(0, 0, task);
 		}
 
+//		fprintf(stderr, "%s: %s: calling wl_display_dispatch_pending\n", __progname, __func__);
 		wl_display_dispatch_pending(display->display);
 
 		if (!display->running)
@@ -5743,6 +5777,7 @@ display_run(struct display *display)
 			break;
 		}
 
+//		fprintf(stderr, "%s:% s: calling event_base_loop\n", __progname, __func__);
 		event_base_loop(display->evbase, EVLOOP_ONCE);
 	}
 }
