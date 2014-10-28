@@ -58,6 +58,7 @@ weston_xserver_handle_event(int listen_fd, uint32_t mask, void *data)
 	char *xserver = NULL;
 	struct weston_config_section *section;
 
+#ifdef SOCK_CLOEXEC
 	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) < 0) {
 		weston_log("wl connection socketpair failed\n");
 		return 1;
@@ -67,6 +68,20 @@ weston_xserver_handle_event(int listen_fd, uint32_t mask, void *data)
 		weston_log("X wm connection socketpair failed\n");
 		return 1;
 	}
+#else
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+		weston_log("wl connection socketpair failed\n");
+		return 1;
+	}
+	fcntl(sv[0], F_SETFD, FD_CLOEXEC);
+	fcntl(sv[1], F_SETFD, FD_CLOEXEC);
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, wm) < 0) {
+		weston_log("X wm connection socketpair failed\n");
+		return 1;
+	}
+	fcntl(wm[0], F_SETFD, FD_CLOEXEC);
+	fcntl(wm[1], F_SETFD, FD_CLOEXEC);
+#endif
 
 	wxs->process.pid = fork();
 	switch (wxs->process.pid) {
@@ -129,9 +144,11 @@ weston_xserver_handle_event(int listen_fd, uint32_t mask, void *data)
 		weston_log("forked X server, pid %d\n", wxs->process.pid);
 
 		close(sv[1]);
+		fcntl(sv[0], F_SETFL, O_NONBLOCK);
 		wxs->client = wl_client_create(wxs->wl_display, sv[0]);
 
 		close(wm[1]);
+		fcntl(wm[0], F_SETFL, O_NONBLOCK);
 		wxs->wm_fd = wm[0];
 
 		weston_watch_process(&wxs->process);
@@ -189,6 +206,8 @@ weston_xserver_cleanup(struct weston_process *process, int status)
 		wl_event_loop_add_fd(wxs->loop, wxs->unix_fd,
 				     WL_EVENT_READABLE,
 				     weston_xserver_handle_event, wxs);
+//	wxs->sigusr1_source = wl_event_loop_add_signal(wxs->loop, SIGUSR1,
+//						       handle_sigusr1, wxs);
 
 	if (wxs->wm) {
 		weston_log("xserver exited, code %d\n", status);
@@ -210,13 +229,20 @@ bind_to_abstract_socket(int display)
 	socklen_t size, name_size;
 	int fd;
 
+#ifdef SOCK_CLOEXEC
 	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd < 0)
 		return -1;
+#else
+	fd = socket(PF_LOCAL, SOCK_STREAM, 0);
+	if (fd < 0)
+		return -1;
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
 
 	addr.sun_family = AF_LOCAL;
 	name_size = snprintf(addr.sun_path, sizeof addr.sun_path,
-			     "%c/tmp/.X11-unix/X%d", 0, display);
+			     "/tmp/.X11-unix/X%d", display);
 	size = offsetof(struct sockaddr_un, sun_path) + name_size;
 	if (bind(fd, (struct sockaddr *) &addr, size) < 0) {
 		weston_log("failed to bind to @%s: %m\n", addr.sun_path + 1);
@@ -239,9 +265,16 @@ bind_to_unix_socket(int display)
 	socklen_t size, name_size;
 	int fd;
 
+#ifdef SOCK_CLOEXEC
 	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd < 0)
 		return -1;
+#else
+	fd = socket(PF_LOCAL, SOCK_STREAM, 0);
+	if (fd < 0)
+		return -1;
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
 
 	addr.sun_family = AF_LOCAL;
 	name_size = snprintf(addr.sun_path, sizeof addr.sun_path,
@@ -366,7 +399,7 @@ module_init(struct weston_compositor *compositor,
 	if (create_lockfile(wxs->display, lockfile, sizeof lockfile) < 0) {
 		if (errno == EAGAIN) {
 			goto retry;
-		} else if (errno == EEXIST) {
+		} else if (errno == EEXIST || errno == EACCES) {
 			wxs->display++;
 			goto retry;
 		} else {
