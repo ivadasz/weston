@@ -25,6 +25,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include <sys/time.h>
 #include <linux/input.h>
 
@@ -33,11 +34,25 @@
 #include "compositor.h"
 #include "pixman-renderer.h"
 
+#define DEFAULT_AXIS_STEP_DISTANCE wl_fixed_from_int(5)
+
+struct mouse_event_item {
+	uint32_t time;
+	int buttonMask;
+	int xabs;
+	int yabs;
+	struct wl_list link;
+};
+
 struct vnc_compositor {
 	struct weston_compositor base;
 	struct weston_seat core_seat;
 	struct wl_event_source *input_source;
-	int ptrx, ptry, ptrmask;
+	int ptrx, ptry, ptrmask;		/* current mouse parameters */
+	/* XXX put mouse and keyboard events into the same queue */
+	struct wl_list mouse_input_list;	/* mouse input queue */
+	uint64_t mouse_queue_length;		/* count length of queue */
+	pthread_mutex_t input_mtx;
 };
 
 struct vnc_output {
@@ -73,66 +88,20 @@ vnc_output_repaint(struct weston_output *base,
 	struct vnc_output *output = (struct vnc_output *) base;
 	struct weston_compositor *ec = output->base.compositor;
 	pixman_box32_t *rects;
-	int nrects, i, x1, y1, x2, y2, width, height;
+	int nrects, i, x1, y1, x2, y2;
 
 	/* Repaint the damaged region onto the back buffer. */
 	pixman_renderer_output_set_buffer(base, output->shadow_surface);
 	ec->renderer->repaint_output(base, damage);
 
-	/* Transform and composite onto the frame buffer. */
-	width = pixman_image_get_width(output->shadow_surface);
-	height = pixman_image_get_height(output->shadow_surface);
 	rects = pixman_region32_rectangles(damage, &nrects);
-
 	for (i = 0; i < nrects; i++) {
 		x1 = rects[i].x1;
 		x2 = rects[i].x2;
 		y1 = rects[i].y1;
 		y2 = rects[i].y2;
 		rfbMarkRectAsModified(output->vncserver, x1, y1, x2, y2);
-#if 0
-		switch (base->transform) {
-		default:
-		case WL_OUTPUT_TRANSFORM_NORMAL:
-			x1 = rects[i].x1;
-			x2 = rects[i].x2;
-			y1 = rects[i].y1;
-			y2 = rects[i].y2;
-			break;
-		case WL_OUTPUT_TRANSFORM_180:
-			x1 = width - rects[i].x2;
-			x2 = width - rects[i].x1;
-			y1 = height - rects[i].y2;
-			y2 = height - rects[i].y1;
-			break;
-		case WL_OUTPUT_TRANSFORM_90:
-			x1 = height - rects[i].y2;
-			x2 = height - rects[i].y1;
-			y1 = rects[i].x1;
-			y2 = rects[i].x2;
-			break;
-		case WL_OUTPUT_TRANSFORM_270:
-			x1 = rects[i].y1;
-			x2 = rects[i].y2;
-			y1 = width - rects[i].x2;
-			y2 = width - rects[i].x1;
-			break;
-		}
-		src_x = x1;
-		src_y = y1;
-
-		pixman_image_composite32(PIXMAN_OP_SRC,
-			output->shadow_surface, /* src */
-			NULL, /* mask */
-			output->hw_surface, /* dest */
-			src_x, src_y, /* src_x, src_y */
-			0, 0, /* mask_x, mask_y */
-			x1, y1, /* dest_x, dest_y */
-			x2 - x1, /* width */
-			y2 - y1 /* height */);
-#endif
 	}
-	fprintf(stderr, "%s: repainted\n", __func__);
 
 	pixman_region32_subtract(&ec->primary_plane.damage,
 				 &ec->primary_plane.damage, damage);
@@ -157,14 +126,33 @@ static void
 vnc_ptr_event(int buttonMask, int x, int y, struct _rfbClientRec *cl)
 {
 	struct vnc_compositor *c = cl->screen->screenData;
+	struct mouse_event_item *it;
 
-	fprintf(stderr, "%s: buttonMask=%d, x=%d, y=%d\n", __func__,
-	    buttonMask, x, y);
+//	fprintf(stderr, "%s: buttonMask=%d, x=%d, y=%d\n", __func__,
+//	    buttonMask, x, y);
 
-//	notify_motion_absolute(&c->core_seat, weston_compositor_get_time(), x*100, y*100);
-	c->ptrx = x;
-	c->ptry = y;
-	c->ptrmask = buttonMask;
+	it = zalloc(sizeof(struct mouse_event_item));
+	if (it == NULL) {
+		perror("zalloc");
+		return;
+	}
+
+	it->time = weston_compositor_get_time();
+	it->buttonMask = buttonMask;
+	it->xabs = x;
+	it->yabs = y;
+
+	pthread_mutex_lock(&c->input_mtx);
+	wl_list_insert(&c->mouse_input_list, &it->link);
+	c->mouse_queue_length++;
+	pthread_mutex_unlock(&c->input_mtx);
+
+	if (c->mouse_queue_length > 10000) {
+		fprintf(stderr, "%s: excessive mouse input queue length: %jd entries\n", __func__, c->mouse_queue_length);
+		while (*(volatile uint64_t *)&c->mouse_queue_length > 10000)
+			sleep(1);
+	}
+
 	wl_event_source_timer_update(c->input_source, 1000);
 	wl_event_source_activate(c->input_source);
 }
@@ -245,44 +233,89 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 	return 0;
 }
 
+static void
+vnc_pass_mouse_events(struct vnc_compositor *c, struct mouse_event_item *it)
+{
+	wl_fixed_t wl_x, wl_y;
+	int nm;
+
+	static uint32_t lasttime;
+	static int prevx = 0, prevy = 0;
+	static int prevmask = 0;
+	static int lazymotion = 0;
+
+	if (it == NULL && lazymotion) {
+		wl_x = wl_fixed_from_int(prevx);
+		wl_y = wl_fixed_from_int(prevy);
+		notify_motion_absolute(&c->core_seat, lasttime, wl_x, wl_y);
+		lazymotion = 0;
+	}
+	if (it == NULL)
+		return;
+
+	nm = it->buttonMask;
+	lasttime = it->time;
+
+	if (prevx != it->xabs || prevy != it->yabs) {
+//		fprintf(stderr, "moving from %dx%d to %dx%d\n", prevx, prevy, it->xabs, it->yabs);
+		lazymotion = 1;
+	}
+	prevx = it->xabs;
+	prevy = it->yabs;
+	if (prevmask != nm) {
+		wl_x = wl_fixed_from_int(prevx);
+		wl_y = wl_fixed_from_int(prevy);
+		notify_motion_absolute(&c->core_seat, it->time, wl_x, wl_y);
+		lazymotion = 0;
+		fprintf(stderr, "setting mask from %d to %d\n", prevmask, nm);
+		if ((prevmask & 1) != (nm & 1)) {
+			notify_button(&c->core_seat,
+			    it->time, BTN_LEFT,
+			    (nm & 1) ? WL_POINTER_BUTTON_STATE_PRESSED :
+			               WL_POINTER_BUTTON_STATE_RELEASED);
+		}
+		if ((prevmask & 2) != (nm & 2)) {
+			notify_button(&c->core_seat,
+			    it->time, BTN_MIDDLE,
+			    (nm & 2) ? WL_POINTER_BUTTON_STATE_PRESSED :
+			               WL_POINTER_BUTTON_STATE_RELEASED);
+		}
+		if ((prevmask & 4) != (nm & 4)) {
+			notify_button(&c->core_seat,
+			    it->time, BTN_RIGHT,
+			    (nm & 4) ? WL_POINTER_BUTTON_STATE_PRESSED :
+			               WL_POINTER_BUTTON_STATE_RELEASED);
+		}
+		if ((prevmask & 8) != (nm & 8)) {
+			notify_axis(&c->core_seat,
+			    it->time, WL_POINTER_AXIS_VERTICAL_SCROLL,
+			    -DEFAULT_AXIS_STEP_DISTANCE);
+		}
+		if ((prevmask & 16) != (nm & 16)) {
+			notify_axis(&c->core_seat,
+			    it->time, WL_POINTER_AXIS_VERTICAL_SCROLL,
+			    DEFAULT_AXIS_STEP_DISTANCE);
+		}
+		prevmask = nm;
+	}
+}
+
 static int
 vnc_input_handler(void *data)
 {
 	struct vnc_compositor *c = (struct vnc_compositor *)data;
-	wl_fixed_t wl_x, wl_y;
-static int prevx = 0, prevy = 0;
+	struct mouse_event_item *it, *next;
 
-	wl_x = wl_fixed_from_int((int)c->ptrx);
-	wl_y = wl_fixed_from_int((int)c->ptry);
-	if (prevx != c->ptrx || prevy != c->ptry) {
-		fprintf(stderr, "moving from %dx%d to %dx%d\n", prevx, prevy, c->ptrx, c->ptry);
-		notify_motion_absolute(&c->core_seat, weston_compositor_get_time(), wl_x, wl_y);
+	pthread_mutex_lock(&c->input_mtx);
+	wl_list_for_each_reverse_safe(it, next, &c->mouse_input_list, link) {
+		/* XXX handle mouse and keyboard events */
+		vnc_pass_mouse_events(c, it);
+		free(it);
 	}
-	prevx = c->ptrx;
-	prevy = c->ptry;
-static int prevmask = 0;
-	if (prevmask != c->ptrmask) {
-		fprintf(stderr, "setting mask from %d to %d\n", prevmask, c->ptrmask);
-		if ((prevmask & 1) != (c->ptrmask & 1)) {
-			notify_button(&c->core_seat,
-			    weston_compositor_get_time(), BTN_LEFT,
-			    (c->ptrmask & 1) ? WL_POINTER_BUTTON_STATE_PRESSED :
-			                       WL_POINTER_BUTTON_STATE_RELEASED);
-		}
-		if ((prevmask & 2) != (c->ptrmask & 2)) {
-			notify_button(&c->core_seat,
-			    weston_compositor_get_time(), BTN_MIDDLE,
-			    (c->ptrmask & 2) ? WL_POINTER_BUTTON_STATE_PRESSED :
-			                       WL_POINTER_BUTTON_STATE_RELEASED);
-		}
-		if ((prevmask & 4) != (c->ptrmask & 4)) {
-			notify_button(&c->core_seat,
-			    weston_compositor_get_time(), BTN_RIGHT,
-			    (c->ptrmask & 4) ? WL_POINTER_BUTTON_STATE_PRESSED :
-			                       WL_POINTER_BUTTON_STATE_RELEASED);
-		}
-		prevmask = c->ptrmask;
-	}
+	wl_list_init(&c->mouse_input_list);
+	pthread_mutex_unlock(&c->input_mtx);
+
+	vnc_pass_mouse_events(c, NULL);
 
 	wl_event_source_timer_update(c->input_source, 1000);
 
@@ -305,6 +338,9 @@ vnc_input_create(struct vnc_compositor *c)
 	c->ptrx = 50;
 	c->ptry = 50;
 	c->ptrmask = 0;
+
+	wl_list_init(&c->mouse_input_list);
+	c->mouse_queue_length = 0;
 
 	notify_motion_absolute(&c->core_seat, weston_compositor_get_time(), 50, 50);
 
@@ -349,6 +385,11 @@ vnc_compositor_create(struct wl_display *display,
 	c = zalloc(sizeof *c);
 	if (c == NULL)
 		return NULL;
+
+	if (pthread_mutex_init(&c->input_mtx, NULL) != 0) {
+		free(c);
+		return NULL;
+	}
 
 	if (weston_compositor_init(&c->base, display, argc, argv, config) < 0)
 		goto err_free;
