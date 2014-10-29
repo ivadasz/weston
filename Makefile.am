@@ -271,6 +271,14 @@ endif
 
 endif
 
+if ENABLE_VNC_COMPOSITOR
+module_LTLIBRARIES += vnc-backend.la
+vnc_backend_la_LDFLAGS = -module -avoid-version
+vnc_backend_la_LIBADD = $(VNCSERVER_LIBS) $(COMPOSITOR_LIBS) libshared.la
+vnc_backend_la_CFLAGS = $(VNCSERVER_CFLAGS) $(COMPOSITOR_CFLAGS) $(GCC_CFLAGS)
+vnc_backend_la_SOURCES = src/compositor-vnc.c
+endif
+
 if ENABLE_HEADLESS_COMPOSITOR
 module_LTLIBRARIES += headless-backend.la
 headless_backend_la_LDFLAGS = -module -avoid-version
