@@ -208,6 +208,11 @@ if test x$enable_headless_compositor = xyes; then
   AC_DEFINE([BUILD_HEADLESS_COMPOSITOR], [1], [Build the headless compositor])
 fi
 
+AC_ARG_ENABLE(vnc-compositor, [  --enable-vnc-compositor],,
+	      enable_vnc_compositor=yes)
+AM_CONDITIONAL(ENABLE_VNC_COMPOSITOR,
+	       test x$enable_vnc_compositor = xyes)
+
 
 AC_ARG_ENABLE(rpi-compositor,
 	      AS_HELP_STRING([--disable-rpi-compositor],
@@ -322,6 +327,8 @@ else
   AC_ERROR([libjpeg not found])
 fi
 AC_SUBST(JPEG_LIBS)
+
+PKG_CHECK_MODULES(VNCSERVER, [libvncserver])
 
 PKG_CHECK_MODULES(CAIRO, [cairo])
 
@@ -603,6 +610,7 @@ AC_MSG_RESULT([
 	X11 Compositor			${enable_x11_compositor}
 	Wayland Compositor		${enable_wayland_compositor}
 	Headless Compositor		${enable_headless_compositor}
+	VNC Compositor			${enable_vnc_compositor}
 	RPI Compositor			${enable_rpi_compositor}
 	FBDEV Compositor		${enable_fbdev_compositor}
 	RDP Compositor			${enable_rdp_compositor}
