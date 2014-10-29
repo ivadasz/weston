@@ -196,7 +196,7 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 	output->vncserver->listen6Interface = "::1";
 
 	output->shadow_surface =
-		pixman_image_create_bits(PIXMAN_x8r8g8b8,
+		pixman_image_create_bits(PIXMAN_x8b8g8r8,
 					 width, height,
 					 (uint32_t *)output->vncserver->frameBuffer,
 					 width * 4);
