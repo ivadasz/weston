@@ -57,6 +57,7 @@ struct vnc_compositor {
 	struct wl_list vnc_input_list;	/* mouse input queue */
 	uint64_t input_queue_length;		/* count length of queue */
 	pthread_mutex_t input_mtx;
+	pthread_mutex_t finish_mtx;
 };
 
 struct vnc_output {
@@ -65,22 +66,42 @@ struct vnc_output {
 	struct wl_event_source *finish_frame_timer;
 	rfbScreenInfoPtr vncserver;
 	pixman_image_t *shadow_surface;
+	struct vnc_compositor *c;
+	pthread_cond_t repaint_cond;
 };
 
 
 static void
 vnc_output_start_repaint_loop(struct weston_output *output)
 {
+#if 0
 	struct timespec ts;
 
 	clock_gettime(output->compositor->presentation_clock, &ts);
 	weston_output_finish_frame(output, &ts);
+#endif
 }
 
 static int
 finish_frame_handler(void *data)
 {
-	vnc_output_start_repaint_loop(data);
+	struct weston_output *output = (struct weston_output *)data;
+	struct vnc_output *vncoutput = (struct vnc_output *)data;
+	struct timespec ts;
+
+//	fprintf(stderr, "%s: called\n", __func__);
+
+	clock_gettime(output->compositor->presentation_clock, &ts);
+	weston_output_finish_frame(output, &ts);
+	wl_event_source_timer_update(vncoutput->finish_frame_timer, 40);
+
+//	fprintf(stderr, "%s: done\n", __func__);
+
+//	vnc_output_start_repaint_loop(data);
+
+	pthread_mutex_lock(&vncoutput->c->finish_mtx);
+	pthread_cond_signal(&vncoutput->repaint_cond);
+	pthread_mutex_unlock(&vncoutput->c->finish_mtx);
 
 	return 1;
 }
@@ -94,9 +115,13 @@ vnc_output_repaint(struct weston_output *base,
 	pixman_box32_t *rects;
 	int nrects, i, x1, y1, x2, y2;
 
+//	fprintf(stderr, "%s: called\n", __func__);
+
 	/* Repaint the damaged region onto the back buffer. */
 	pixman_renderer_output_set_buffer(base, output->shadow_surface);
+	pthread_mutex_lock(&output->c->finish_mtx);
 	ec->renderer->repaint_output(base, damage);
+	pthread_mutex_unlock(&output->c->finish_mtx);
 
 	rects = pixman_region32_rectangles(damage, &nrects);
 	for (i = 0; i < nrects; i++) {
@@ -104,13 +129,12 @@ vnc_output_repaint(struct weston_output *base,
 		x2 = rects[i].x2;
 		y1 = rects[i].y1;
 		y2 = rects[i].y2;
+//		fprintf(stderr, "markasmodified rect %dx%d,%dx%d\n", x1, y1, x2, y2);
 		rfbMarkRectAsModified(output->vncserver, x1, y1, x2, y2);
 	}
 
 	pixman_region32_subtract(&ec->primary_plane.damage,
 				 &ec->primary_plane.damage, damage);
-
-	wl_event_source_timer_update(output->finish_frame_timer, 16);
 
 	return 0;
 }
@@ -127,9 +151,33 @@ vnc_output_destroy(struct weston_output *output_base)
 }
 
 static void
+vnc_display_event(struct _rfbClientRec *cl)
+{
+	struct vnc_output *output = cl->screen->screenData;
+
+//	fprintf(stderr, "%s: called\n", __func__);
+
+	pthread_mutex_lock(&output->c->finish_mtx);
+	wl_event_source_activate(output->finish_frame_timer);
+	pthread_cond_wait(&output->repaint_cond, &output->c->finish_mtx);
+	pthread_mutex_unlock(&output->c->finish_mtx);
+
+	/* XXX */
+}
+
+static void
+vnc_displayfinished_event(struct _rfbClientRec *cl, int result)
+{
+//	struct vnc_output *output = cl->screen->screenData;
+
+//	fprintf(stderr, "%s: called\n", __func__);
+}
+
+static void
 vnc_ptr_event(int buttonMask, int x, int y, struct _rfbClientRec *cl)
 {
-	struct vnc_compositor *c = cl->screen->screenData;
+	struct vnc_output *output = cl->screen->screenData;
+	struct vnc_compositor *c = output->c;
 	struct input_event_item *it;
 
 //	fprintf(stderr, "%s: buttonMask=%d, x=%d, y=%d\n", __func__,
@@ -200,7 +248,6 @@ vnc_kbd_event(rfbBool down, rfbKeySym keySym, struct _rfbClientRec *cl)
 		}
 	}
 
-	wl_event_source_timer_update(c->input_source, 1000);
 	wl_event_source_activate(c->input_source);
 }
 
@@ -215,10 +262,19 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 	if (output == NULL)
 		return -1;
 
+	if (pthread_cond_init(&output->repaint_cond, NULL) != 0) {
+		free(output);
+		return -1;
+	}
+
+	output->c = c;
 	output->vncserver = rfbGetScreen(NULL, NULL, width, height, 8, 3, 4);
-	output->vncserver->screenData = c;
+	output->vncserver->deferUpdateTime = 30;
+	output->vncserver->screenData = output;
 	output->vncserver->frameBuffer = calloc(width * height, 4);
 	/* XXX clean up on calloc failure */
+	output->vncserver->displayHook = vnc_display_event;
+	output->vncserver->displayFinishedHook = vnc_displayfinished_event;
 	output->vncserver->ptrAddEvent = vnc_ptr_event;
 	output->vncserver->kbdAddEvent = vnc_kbd_event;
 	output->vncserver->autoPort = FALSE;
@@ -245,7 +301,7 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 		WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED;
 	output->mode.width = width;
 	output->mode.height = height;
-	output->mode.refresh = 60;
+	output->mode.refresh = 33;
 	wl_list_init(&output->base.mode_list);
 	wl_list_insert(&output->base.mode_list, &output->mode.link);
 
@@ -592,8 +648,6 @@ vnc_input_handler(void *data)
 
 	vnc_pass_mouse_events(c, NULL);
 
-	wl_event_source_timer_update(c->input_source, 1000);
-
 	return 1;
 }
 
@@ -620,7 +674,6 @@ vnc_input_create(struct vnc_compositor *c)
 
 	c->input_source = wl_event_loop_add_timer(
 	    wl_display_get_event_loop(c->base.wl_display), vnc_input_handler, c);
-	wl_event_source_timer_update(c->input_source, 1000);
 
 	return 0;
 }
@@ -661,6 +714,10 @@ vnc_compositor_create(struct wl_display *display,
 		return NULL;
 
 	if (pthread_mutex_init(&c->input_mtx, NULL) != 0) {
+		free(c);
+		return NULL;
+	}
+	if (pthread_mutex_init(&c->finish_mtx, NULL) != 0) {
 		free(c);
 		return NULL;
 	}
