@@ -30,13 +30,17 @@
 #include <linux/input.h>
 
 #include <rfb/rfb.h>
+#include <rfb/keysym.h>
 
 #include "compositor.h"
 #include "pixman-renderer.h"
 
 #define DEFAULT_AXIS_STEP_DISTANCE wl_fixed_from_int(5)
 
-struct mouse_event_item {
+struct input_event_item {
+	int type;
+	rfbBool down;
+	rfbKeySym keySym;
 	uint32_t time;
 	int buttonMask;
 	int xabs;
@@ -50,8 +54,8 @@ struct vnc_compositor {
 	struct wl_event_source *input_source;
 	int ptrx, ptry, ptrmask;		/* current mouse parameters */
 	/* XXX put mouse and keyboard events into the same queue */
-	struct wl_list mouse_input_list;	/* mouse input queue */
-	uint64_t mouse_queue_length;		/* count length of queue */
+	struct wl_list vnc_input_list;	/* mouse input queue */
+	uint64_t input_queue_length;		/* count length of queue */
 	pthread_mutex_t input_mtx;
 };
 
@@ -126,31 +130,74 @@ static void
 vnc_ptr_event(int buttonMask, int x, int y, struct _rfbClientRec *cl)
 {
 	struct vnc_compositor *c = cl->screen->screenData;
-	struct mouse_event_item *it;
+	struct input_event_item *it;
 
 //	fprintf(stderr, "%s: buttonMask=%d, x=%d, y=%d\n", __func__,
 //	    buttonMask, x, y);
 
-	it = zalloc(sizeof(struct mouse_event_item));
+	it = zalloc(sizeof(struct input_event_item));
 	if (it == NULL) {
 		perror("zalloc");
 		return;
 	}
 
+	it->type = 1;
 	it->time = weston_compositor_get_time();
 	it->buttonMask = buttonMask;
 	it->xabs = x;
 	it->yabs = y;
 
 	pthread_mutex_lock(&c->input_mtx);
-	wl_list_insert(&c->mouse_input_list, &it->link);
-	c->mouse_queue_length++;
+	wl_list_insert(&c->vnc_input_list, &it->link);
+	c->input_queue_length++;
 	pthread_mutex_unlock(&c->input_mtx);
 
-	if (c->mouse_queue_length > 10000) {
-		fprintf(stderr, "%s: excessive mouse input queue length: %jd entries\n", __func__, c->mouse_queue_length);
-		while (*(volatile uint64_t *)&c->mouse_queue_length > 10000)
-			sleep(1);
+	if (c->input_queue_length > 10000) {
+		fprintf(stderr, "%s: excessive mouse input queue length: %jd entries\n", __func__, c->input_queue_length);
+		if (*(volatile uint64_t *)&c->input_queue_length > 10000) {
+			wl_event_source_activate(c->input_source);
+			pthread_yield();
+		}
+	}
+
+	wl_event_source_activate(c->input_source);
+}
+
+static void
+vnc_kbd_event(rfbBool down, rfbKeySym keySym, struct _rfbClientRec *cl)
+{
+	struct vnc_output *output = cl->screen->screenData;
+	struct vnc_compositor *c = output->c;
+	struct input_event_item *it;
+
+	if (down) {
+		fprintf(stderr, "%s: pressed sym: 0x%x\n", __func__, keySym);
+	} else {
+		fprintf(stderr, "%s: released sym: 0x%x\n", __func__, keySym);
+	}
+
+	it = zalloc(sizeof(struct input_event_item));
+	if (it == NULL) {
+		perror("zalloc");
+		return;
+	}
+
+	it->type = 2;
+	it->time = weston_compositor_get_time();
+	it->down = down;
+	it->keySym = keySym;
+
+	pthread_mutex_lock(&c->input_mtx);
+	wl_list_insert(&c->vnc_input_list, &it->link);
+	c->input_queue_length++;
+	pthread_mutex_unlock(&c->input_mtx);
+
+	if (c->input_queue_length > 10000) {
+		fprintf(stderr, "%s: excessive input queue length: %jd entries\n", __func__, c->input_queue_length);
+		if (*(volatile uint64_t *)&c->input_queue_length > 10000) {
+			wl_event_source_activate(c->input_source);
+			pthread_yield();
+		}
 	}
 
 	wl_event_source_timer_update(c->input_source, 1000);
@@ -173,7 +220,7 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 	output->vncserver->frameBuffer = calloc(width * height, 4);
 	/* XXX clean up on calloc failure */
 	output->vncserver->ptrAddEvent = vnc_ptr_event;
-//	output->vncserver->kbdAddEvent = vnc_kbd_event;
+	output->vncserver->kbdAddEvent = vnc_kbd_event;
 	output->vncserver->autoPort = FALSE;
 	output->vncserver->port = port;
 	if (rfbStringToAddr(listen, &iface)) {
@@ -234,7 +281,7 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 }
 
 static void
-vnc_pass_mouse_events(struct vnc_compositor *c, struct mouse_event_item *it)
+vnc_pass_mouse_events(struct vnc_compositor *c, struct input_event_item *it)
 {
 	wl_fixed_t wl_x, wl_y;
 	int nm;
@@ -267,7 +314,7 @@ vnc_pass_mouse_events(struct vnc_compositor *c, struct mouse_event_item *it)
 		wl_y = wl_fixed_from_int(prevy);
 		notify_motion_absolute(&c->core_seat, it->time, wl_x, wl_y);
 		lazymotion = 0;
-		fprintf(stderr, "setting mask from %d to %d\n", prevmask, nm);
+//		fprintf(stderr, "setting mask from %d to %d\n", prevmask, nm);
 		if ((prevmask & 1) != (nm & 1)) {
 			notify_button(&c->core_seat,
 			    it->time, BTN_LEFT,
@@ -300,19 +347,247 @@ vnc_pass_mouse_events(struct vnc_compositor *c, struct mouse_event_item *it)
 	}
 }
 
+static uint32_t
+vnc_keysym_to_key(int sym)
+{
+	uint32_t key;
+
+	if (sym == XK_BackSpace)
+		key = KEY_BACKSPACE;
+	else if (sym == XK_Tab)
+		key = KEY_TAB;
+	else if (sym == XK_Linefeed)
+		key = KEY_LINEFEED;
+	else if (sym == XK_Clear)
+		key = KEY_CLEAR;
+	else if (sym == XK_Return)
+		key = KEY_ENTER;
+	/* XXX */
+	else if (sym == XK_Escape)
+		key = KEY_ESC;
+	/* XXX */
+	else if (sym == XK_space)
+		key = KEY_SPACE;
+	/* XXX */
+	else if (sym == XK_parenleft)
+		key = KEY_8;
+	else if (sym == XK_parenright)
+		key = KEY_9;
+//	else if (sym == XK_asterisk)
+//		key = KEY_XXX;
+//	else if (sym == XK_plus)
+//		key = KEY_XXX;
+	else if (sym == XK_comma)
+		key = KEY_COMMA;
+	else if (sym == XK_minus)
+		key = KEY_MINUS;
+	else if (sym == XK_period)
+		key = KEY_DOT;
+	else if (sym == XK_slash)
+		key = KEY_7;
+	else if (sym == XK_0)
+		key = KEY_0;
+	else if (sym >= XK_1 && sym <= XK_9)
+		key = KEY_1 + (sym - XK_1);
+	else if (sym == XK_colon)
+		key = KEY_DOT;
+	else if (sym == XK_semicolon)
+		key = KEY_COMMA;
+//	else if (sym == XK_less)
+//		key = KEY_XXX;
+	else if (sym == XK_equal)
+		key = KEY_0;
+//	else if (sym == XK_greater)
+//		key = KEY_LESS;
+//	else if (sym == XK_question)
+//		key = KEY_XXX;
+	else if (sym == XK_at)
+		key = KEY_Q;
+	/* XXX */
+	else if (sym == XK_Shift_L)
+		key = KEY_LEFTSHIFT;
+	else if (sym == XK_Shift_R)
+		key = KEY_RIGHTSHIFT;
+	else if (sym == XK_Control_L)
+		key = KEY_LEFTCTRL;
+	else if (sym == XK_Control_R)
+		key = KEY_RIGHTCTRL;
+	/* XXX */
+	else if (sym == XK_Meta_L)
+		key = KEY_LEFTMETA;
+	else if (sym == XK_Meta_R)
+		key = KEY_RIGHTMETA;
+	else if (sym == XK_Alt_L)
+		key = KEY_LEFTALT;
+	else if (sym == XK_Alt_R)
+		key = KEY_RIGHTALT;
+	/* XXX */
+	else if (sym == XK_A)
+		key = KEY_A;
+	else if (sym == XK_B)
+		key = KEY_B;
+	else if (sym == XK_C)
+		key = KEY_C;
+	else if (sym == XK_D)
+		key = KEY_D;
+	else if (sym == XK_E)
+		key = KEY_E;
+	else if (sym == XK_F)
+		key = KEY_F;
+	else if (sym == XK_G)
+		key = KEY_G;
+	else if (sym == XK_H)
+		key = KEY_H;
+	else if (sym == XK_I)
+		key = KEY_I;
+	else if (sym == XK_J)
+		key = KEY_J;
+	else if (sym == XK_K)
+		key = KEY_K;
+	else if (sym == XK_L)
+		key = KEY_L;
+	else if (sym == XK_M)
+		key = KEY_M;
+	else if (sym == XK_N)
+		key = KEY_N;
+	else if (sym == XK_O)
+		key = KEY_O;
+	else if (sym == XK_P)
+		key = KEY_P;
+	else if (sym == XK_Q)
+		key = KEY_Q;
+	else if (sym == XK_R)
+		key = KEY_R;
+	else if (sym == XK_S)
+		key = KEY_S;
+	else if (sym == XK_T)
+		key = KEY_T;
+	else if (sym == XK_U)
+		key = KEY_U;
+	else if (sym == XK_V)
+		key = KEY_V;
+	else if (sym == XK_W)
+		key = KEY_W;
+	else if (sym == XK_X)
+		key = KEY_X;
+	else if (sym == XK_Y)
+		key = KEY_Y;
+	else if (sym == XK_Z)
+		key = KEY_Z;
+	else if (sym == XK_bracketleft)
+		key = KEY_8;
+//	else if (sym == XK_backslash)
+//		key = KEY_XXX;
+	else if (sym == XK_bracketright)
+		key = KEY_9;
+//	else if (sym == XK_asciicircum)
+//		key = KEY_XXX;
+	else if (sym == XK_underscore)
+		key = KEY_MINUS;
+	else if (sym == XK_grave)
+		key = KEY_GRAVE;
+	/* XXX */
+	else if (sym == XK_a)
+		key = KEY_A;
+	else if (sym == XK_b)
+		key = KEY_B;
+	else if (sym == XK_c)
+		key = KEY_C;
+	else if (sym == XK_d)
+		key = KEY_D;
+	else if (sym == XK_e)
+		key = KEY_E;
+	else if (sym == XK_f)
+		key = KEY_F;
+	else if (sym == XK_g)
+		key = KEY_G;
+	else if (sym == XK_h)
+		key = KEY_H;
+	else if (sym == XK_i)
+		key = KEY_I;
+	else if (sym == XK_j)
+		key = KEY_J;
+	else if (sym == XK_k)
+		key = KEY_K;
+	else if (sym == XK_l)
+		key = KEY_L;
+	else if (sym == XK_m)
+		key = KEY_M;
+	else if (sym == XK_n)
+		key = KEY_N;
+	else if (sym == XK_o)
+		key = KEY_O;
+	else if (sym == XK_p)
+		key = KEY_P;
+	else if (sym == XK_q)
+		key = KEY_Q;
+	else if (sym == XK_r)
+		key = KEY_R;
+	else if (sym == XK_s)
+		key = KEY_S;
+	else if (sym == XK_t)
+		key = KEY_T;
+	else if (sym == XK_u)
+		key = KEY_U;
+	else if (sym == XK_v)
+		key = KEY_V;
+	else if (sym == XK_w)
+		key = KEY_W;
+	else if (sym == XK_x)
+		key = KEY_X;
+	else if (sym == XK_y)
+		key = KEY_Y;
+	else if (sym == XK_z)
+		key = KEY_Z;
+	/* XXX */
+	else
+		key = 0;
+
+	return key;
+}
+
+static void
+vnc_pass_kbd_events(struct vnc_compositor *c, struct input_event_item *it)
+{
+	enum wl_keyboard_key_state state;
+	uint32_t key, sym;
+
+	if (it->down) {
+		state = WL_KEYBOARD_KEY_STATE_PRESSED;
+	} else {
+		state = WL_KEYBOARD_KEY_STATE_RELEASED;
+	}
+
+	sym = it->keySym;
+	key = vnc_keysym_to_key(sym);
+
+	notify_key(&c->core_seat, it->time, key, state,
+	    STATE_UPDATE_AUTOMATIC);
+}
+
 static int
 vnc_input_handler(void *data)
 {
 	struct vnc_compositor *c = (struct vnc_compositor *)data;
-	struct mouse_event_item *it, *next;
+	struct input_event_item *it, *next;
 
 	pthread_mutex_lock(&c->input_mtx);
-	wl_list_for_each_reverse_safe(it, next, &c->mouse_input_list, link) {
+	if (wl_list_empty(&c->vnc_input_list)) {
+		pthread_mutex_unlock(&c->input_mtx);
+		return 0;
+	}
+	wl_list_for_each_reverse_safe(it, next, &c->vnc_input_list, link) {
 		/* XXX handle mouse and keyboard events */
-		vnc_pass_mouse_events(c, it);
+		if (it->type == 1) {
+			vnc_pass_mouse_events(c, it);
+		} else if (it->type == 2) {
+			vnc_pass_mouse_events(c, NULL);
+			vnc_pass_kbd_events(c, it);
+		}
 		free(it);
 	}
-	wl_list_init(&c->mouse_input_list);
+	wl_list_init(&c->vnc_input_list);
+	c->input_queue_length = 0;
 	pthread_mutex_unlock(&c->input_mtx);
 
 	vnc_pass_mouse_events(c, NULL);
@@ -333,14 +608,13 @@ vnc_input_create(struct vnc_compositor *c)
 		fprintf(stderr, "%s: failed\n", __func__);
 		return -1;
 	}
-	weston_seat_init_pointer(&c->core_seat);
 
 	c->ptrx = 50;
 	c->ptry = 50;
 	c->ptrmask = 0;
 
-	wl_list_init(&c->mouse_input_list);
-	c->mouse_queue_length = 0;
+	wl_list_init(&c->vnc_input_list);
+	c->input_queue_length = 0;
 
 	notify_motion_absolute(&c->core_seat, weston_compositor_get_time(), 50, 50);
 
