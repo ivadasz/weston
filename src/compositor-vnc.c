@@ -29,6 +29,7 @@
 #include <sys/time.h>
 #include <linux/input.h>
 
+#include <rfb/rfbconfig.h>
 #include <rfb/rfb.h>
 #include <rfb/keysym.h>
 
@@ -436,7 +437,7 @@ vnc_keysym_to_key(int sym)
 	else if (sym == XK_comma)
 		key = KEY_COMMA;
 	else if (sym == XK_minus)
-		key = KEY_MINUS;
+		key = KEY_SLASH;
 	else if (sym == XK_period)
 		key = KEY_DOT;
 	else if (sym == XK_slash)
@@ -455,8 +456,8 @@ vnc_keysym_to_key(int sym)
 		key = KEY_0;
 //	else if (sym == XK_greater)
 //		key = KEY_LESS;
-//	else if (sym == XK_question)
-//		key = KEY_XXX;
+	else if (sym == XK_question)
+		key = KEY_MINUS;
 	else if (sym == XK_at)
 		key = KEY_Q;
 	/* XXX */
@@ -527,19 +528,19 @@ vnc_keysym_to_key(int sym)
 	else if (sym == XK_X)
 		key = KEY_X;
 	else if (sym == XK_Y)
-		key = KEY_Y;
-	else if (sym == XK_Z)
 		key = KEY_Z;
+	else if (sym == XK_Z)
+		key = KEY_Y;
 	else if (sym == XK_bracketleft)
 		key = KEY_8;
-//	else if (sym == XK_backslash)
-//		key = KEY_XXX;
+	else if (sym == XK_backslash)
+		key = KEY_MINUS;
 	else if (sym == XK_bracketright)
 		key = KEY_9;
 //	else if (sym == XK_asciicircum)
 //		key = KEY_XXX;
 	else if (sym == XK_underscore)
-		key = KEY_MINUS;
+		key = KEY_SLASH;
 	else if (sym == XK_grave)
 		key = KEY_GRAVE;
 	/* XXX */
@@ -592,9 +593,15 @@ vnc_keysym_to_key(int sym)
 	else if (sym == XK_x)
 		key = KEY_X;
 	else if (sym == XK_y)
-		key = KEY_Y;
-	else if (sym == XK_z)
 		key = KEY_Z;
+	else if (sym == XK_z)
+		key = KEY_Y;
+	/* XXX */
+	else if (sym == XK_ssharp)
+		key = KEY_MINUS;
+	/* XXX */
+	else if (sym == XK_ISO_Level3_Shift)
+		key = KEY_RIGHTALT;
 	/* XXX */
 	else
 		key = 0;
