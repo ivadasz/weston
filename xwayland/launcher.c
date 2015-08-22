@@ -43,8 +43,10 @@ handle_sigusr1(int signal_number, void *data)
 	/* We'd be safer if we actually had the struct
 	 * signalfd_siginfo from the signalfd data and could verify
 	 * this came from Xwayland.*/
+	fprintf(stderr, "%s: calling weston_wm_create\n", __func__);
 	wxs->wm = weston_wm_create(wxs, wxs->wm_fd);
 	wl_event_source_remove(wxs->sigusr1_source);
+	fprintf(stderr, "%s: finished\n", __func__);
 
 	return 1;
 }
@@ -58,12 +60,13 @@ weston_xserver_handle_event(int listen_fd, uint32_t mask, void *data)
 	char *xserver = NULL;
 	struct weston_config_section *section;
 
+	fprintf(stderr, "%s: running\n", __func__);
+
 #ifdef SOCK_CLOEXEC
 	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) < 0) {
 		weston_log("wl connection socketpair failed\n");
 		return 1;
 	}
-
 	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, wm) < 0) {
 		weston_log("X wm connection socketpair failed\n");
 		return 1;
@@ -123,6 +126,7 @@ weston_xserver_handle_event(int listen_fd, uint32_t mask, void *data)
 		 * it's done with that. */
 		signal(SIGUSR1, SIG_IGN);
 
+		fprintf(stderr, "%s: calling execl(%s, %s, ...\n", __func__, xserver, xserver);
 		if (execl(xserver,
 			  xserver,
 			  display,
@@ -155,6 +159,7 @@ weston_xserver_handle_event(int listen_fd, uint32_t mask, void *data)
 
 		wl_event_source_remove(wxs->abstract_source);
 		wl_event_source_remove(wxs->unix_source);
+		fprintf(stderr, "%s: done forking off Xwayland\n", __func__);
 		break;
 
 	case -1:
@@ -370,6 +375,8 @@ weston_xserver_destroy(struct wl_listener *l, void *data)
 
 	if (!wxs)
 		return;
+
+	fprintf(stderr, "%s: running\n", __func__);
 
 	if (wxs->loop)
 		weston_xserver_shutdown(wxs);
