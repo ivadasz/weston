@@ -27,7 +27,9 @@
 #include <string.h>
 #include <pthread.h>
 #include <sys/time.h>
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 
 #include <rfb/rfbconfig.h>
 #include <rfb/rfb.h>

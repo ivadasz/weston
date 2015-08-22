@@ -34,7 +34,9 @@
 #include "pixman-renderer.h"
 #include "shared/helpers.h"
 
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 
 struct pixman_output_state {
 	void *shadow_buffer;
