@@ -46,7 +46,7 @@
 #include "compositor.h"
 #include "launcher-util.h"
 #include "pixman-renderer.h"
-#include "libinput-seat.h"
+#include "udev-input.h"
 #include "gl-renderer.h"
 #include "presentation_timing-server-protocol.h"
 

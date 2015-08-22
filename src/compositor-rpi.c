@@ -50,7 +50,11 @@
 #include "compositor.h"
 #include "rpi-renderer.h"
 #include "launcher-util.h"
+#if 0
 #include "libinput-seat.h"
+#else
+#include "udev-input.h"
+#endif
 #include "presentation_timing-server-protocol.h"
 
 #if 0

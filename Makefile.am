@@ -232,13 +232,26 @@ x11_backend_la_SOURCES = 			\
 	shared/helpers.h
 endif
 
+INPUT_BACKEND_SOURCES = src/udev-input.h
+
+if ENABLE_LIBINPUT_BACKEND
 INPUT_BACKEND_LIBS = $(LIBINPUT_BACKEND_LIBS)
-INPUT_BACKEND_SOURCES =				\
+INPUT_BACKEND_SOURCES +=			\
 	src/libinput-seat.c			\
 	src/libinput-seat.h			\
 	src/libinput-device.c			\
 	src/libinput-device.h			\
 	shared/helpers.h
+else
+INPUT_BACKEND_SOURCES +=			\
+	src/filter.c				\
+	src/filter.h				\
+	src/udev-seat.c				\
+	src/udev-seat.h				\
+	src/evdev.c				\
+	src/evdev.h				\
+	src/evdev-touchpad.c
+endif
 
 if ENABLE_DRM_COMPOSITOR
 module_LTLIBRARIES += drm-backend.la
