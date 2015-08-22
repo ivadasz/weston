@@ -617,6 +617,8 @@ AC_MSG_RESULT([
 	Screen Sharing			${enable_screen_sharing}
 	JUnit XML output		${enable_junit_xml}
 
+	libinput Backend		${enable_libinput_backend}
+
 	Raspberry Pi BCM headers	${have_bcm_host}
 
 	Build Clients			${enable_clients}
