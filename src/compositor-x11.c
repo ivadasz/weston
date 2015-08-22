@@ -1210,6 +1210,7 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 	prev = NULL;
 	count = 0;
 	while (x11_backend_next_event(b, &event, mask)) {
+		mask &= ~WL_EVENT_READABLE;
 		response_type = event->response_type & ~0x80;
 //		fprintf(stderr, "%s: new event\n", __func__);
 
@@ -1681,11 +1682,13 @@ x11_backend_create(struct weston_compositor *compositor,
 				     x11_backend_handle_event, b);
 	wl_event_source_check(b->xcb_source);
 
+#if 0
 	if (compositor->renderer->import_dmabuf) {
 		if (linux_dmabuf_setup(compositor) < 0)
 			weston_log("Error: initializing dmabuf "
 				   "support failed.\n");
 	}
+#endif
 
 	compositor->backend = &b->base;
 
