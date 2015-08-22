@@ -1124,11 +1124,14 @@ x11_compositor_next_event(struct x11_compositor *c,
 			  xcb_generic_event_t **event, uint32_t mask)
 {
 	if (mask & WL_EVENT_READABLE) {
+//		fprintf(stderr, "%s: calling xcb_poll_for_event\n", __func__);
 		*event = xcb_poll_for_event(c->conn);
 	} else {
 #ifdef HAVE_XCB_POLL_FOR_QUEUED_EVENT
+//		fprintf(stderr, "%s: calling xcb_poll_for_queued_event\n", __func__);
 		*event = xcb_poll_for_queued_event(c->conn);
 #else
+//		fprintf(stderr, "%s: calling xcb_poll_for_event\n", __func__);
 		*event = xcb_poll_for_event(c->conn);
 #endif
 	}
@@ -1157,9 +1160,11 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 
 	prev = NULL;
 	count = 0;
+//	fprintf(stderr, "%s: polling for x11 event\n", __func__);
 	while (x11_compositor_next_event(c, &event, mask)) {
 		mask &= ~WL_EVENT_READABLE;
 		response_type = event->response_type & ~0x80;
+//		fprintf(stderr, "%s: new event\n", __func__);
 
 		switch (prev ? prev->response_type & ~0x80 : 0x80) {
 		case XCB_KEY_RELEASE:
@@ -1322,11 +1327,13 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 		}
 #endif
 
+//		fprintf(stderr, "%s: looping\n", __func__);
 		count++;
 		if (prev != event)
 			free (event);
 //		break;
 	}
+//	fprintf(stderr, "%s: done\n", __func__);
 
 	switch (prev ? prev->response_type & ~0x80 : 0x80) {
 	case XCB_KEY_RELEASE:
