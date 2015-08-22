@@ -28,7 +28,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 #include <assert.h>
 #include <signal.h>
 #include <math.h>

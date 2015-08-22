@@ -32,7 +32,9 @@
 #include <unistd.h>
 #include <signal.h>
 #include <X11/Xcursor/Xcursor.h>
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 
 #include "xwayland.h"
 

@@ -40,7 +40,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <math.h>
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 #include <dlfcn.h>
 #include <signal.h>
 #include <setjmp.h>

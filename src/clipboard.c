@@ -24,7 +24,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/uio.h>

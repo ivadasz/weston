@@ -27,7 +27,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wayland-util.h>
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 
 #include "cairo-util.h"
 

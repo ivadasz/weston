@@ -33,7 +33,9 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/shm.h>
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 
 #include <xcb/xcb.h>
 #include <xcb/shm.h>

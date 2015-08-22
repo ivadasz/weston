@@ -64,7 +64,9 @@ typedef void *EGLContext;
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-cursor.h>
 
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 #include <wayland-client.h>
 #include "../shared/cairo-util.h"
 #include "xdg-shell-client-protocol.h"
