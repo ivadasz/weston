@@ -5352,7 +5352,7 @@ shell_fade(struct desktop_shell *shell, enum fade_type type)
 		weston_view_update_transform(shell->fade.view);
 	}
 
-	if (shell->fade.view->output == NULL) {
+//	if (shell->fade.view->output == NULL) {
 		/* If the black view gets a NULL output, we lost the
 		 * last output and we'll just cancel the fade.  This
 		 * happens when you close the last window under the
@@ -5360,6 +5360,7 @@ shell_fade(struct desktop_shell *shell, enum fade_type type)
 		shell->locked = false;
 		weston_surface_destroy(shell->fade.view->surface);
 		shell->fade.view = NULL;
+#if 0
 	} else if (shell->fade.animation) {
 		weston_fade_update(shell->fade.animation, tint);
 	} else {
@@ -5368,6 +5369,7 @@ shell_fade(struct desktop_shell *shell, enum fade_type type)
 					1.0 - tint, tint, 300.0,
 					shell_fade_done, shell);
 	}
+#endif
 }
 
 static void

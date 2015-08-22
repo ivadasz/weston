@@ -289,6 +289,7 @@ weston_zoom_run(struct weston_view *view, float start, float stop,
 	zoom->spring.friction = 1400;
 	zoom->spring.previous = start - (stop - start) * 0.03;
 
+	fprintf(stderr, "%s: running\n", __func__);
 	weston_view_animation_run(zoom);
 
 	return zoom;
@@ -325,6 +326,7 @@ weston_fade_run(struct weston_view *view,
 
 	view->alpha = start;
 
+	fprintf(stderr, "%s: running\n", __func__);
 	weston_view_animation_run(fade);
 
 	return fade;
@@ -376,6 +378,7 @@ weston_stable_fade_run(struct weston_view *front_view, float start,
 	front_view->alpha = start;
 	back_view->alpha = end;
 
+	fprintf(stderr, "%s: running\n", __func__);
 	weston_view_animation_run(fade);
 
 	return fade;
@@ -409,6 +412,7 @@ weston_slide_run(struct weston_view *view, float start, float stop,
 	animation->spring.friction = 600;
 	animation->spring.clip = WESTON_SPRING_BOUNCE;
 
+	fprintf(stderr, "%s: running\n", __func__);
 	weston_view_animation_run(animation);
 
 	return animation;
@@ -477,6 +481,7 @@ weston_move_scale_run(struct weston_view *view, int dx, int dy,
 	weston_spring_init(&animation->spring, 400.0, 0.0, 1.0);
 	animation->spring.friction = 1150;
 
+	fprintf(stderr, "%s: running\n", __func__);
 	weston_view_animation_run(animation);
 
 	return animation;

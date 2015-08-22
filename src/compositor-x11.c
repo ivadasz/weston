@@ -1209,6 +1209,7 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 	count = 0;
 	while (x11_backend_next_event(b, &event, mask)) {
 		response_type = event->response_type & ~0x80;
+//		fprintf(stderr, "%s: new event\n", __func__);
 
 		switch (prev ? prev->response_type & ~0x80 : 0x80) {
 		case XCB_KEY_RELEASE:
@@ -1389,11 +1390,13 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 		}
 #endif
 
+//		fprintf(stderr, "%s: looping\n", __func__);
 		count++;
 		if (prev != event)
 			free (event);
 //		break;
 	}
+//	fprintf(stderr, "%s: done\n", __func__);
 
 	switch (prev ? prev->response_type & ~0x80 : 0x80) {
 	case XCB_KEY_RELEASE:
