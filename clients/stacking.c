@@ -29,7 +29,9 @@
 #include <string.h>
 #include <stdbool.h>
 
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 #include <cairo.h>
 
 #include "shared/helpers.h"

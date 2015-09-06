@@ -28,7 +28,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 #include <cairo.h>
 
 #include "window.h"

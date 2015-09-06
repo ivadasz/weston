@@ -31,7 +31,9 @@
 #include <stdbool.h>
 #include <unistd.h>
 
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 #include <cairo.h>
 
 #include <pango/pangocairo.h>

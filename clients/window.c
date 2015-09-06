@@ -2647,19 +2647,32 @@ input_ungrab(struct input *input)
 static void
 cursor_delay_timer_reset(struct input *input, uint32_t duration)
 {
+#ifdef __DragonFly__
+	struct timeval tv;
+#else
 	struct itimerspec its;
+#endif
 
 	if (!duration)
 		input->cursor_timer_running = false;
 	else
 		input->cursor_timer_running = true;
 
+#ifdef __DragonFly__
+	tv.tv_sec = duration / 1000;
+	tv.tv_usec = (duration % 1000) * 1000;
+	if (duration == 0)
+		event_del(input->repeat_timer_ev);
+	else
+		event_add(input->repeat_timer_ev, &tv);
+#else
 	its.it_interval.tv_sec = 0;
 	its.it_interval.tv_nsec = 0;
 	its.it_value.tv_sec = duration / 1000;
 	its.it_value.tv_nsec = (duration % 1000) * 1000 * 1000;
 	if (timerfd_settime(input->cursor_delay_fd, 0, &its, NULL) < 0)
 		fprintf(stderr, "could not set cursor timerfd\n: %m");
+#endif
 }
 
 static void cancel_pointer_image_update(struct input *input)
@@ -5249,9 +5262,13 @@ display_add_input(struct display *d, uint32_t id)
 	input->pointer_surface = wl_compositor_create_surface(d->compositor);
 	input->cursor_task.run = cursor_timer_func;
 
+#ifdef __DragonFly__
+	input->cursor_delay_fd = -1;
+#else
 	input->cursor_delay_fd = timerfd_create(CLOCK_MONOTONIC,
 						TFD_CLOEXEC | TFD_NONBLOCK);
-	display_watch_fd(d, input->cursor_delay_fd, EPOLLIN,
+#endif
+	display_watch_fd(d, -1, 0,
 			 &input->cursor_task);
 	set_repeat_info(input, 40, 400);
 

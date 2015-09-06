@@ -41,7 +41,9 @@
 //#include <sys/timerfd.h>
 //#include <sys/epoll.h>
 #endif
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 #include <libgen.h>
 #include <ctype.h>
 #include <time.h>

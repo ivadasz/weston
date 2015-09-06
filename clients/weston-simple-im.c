@@ -30,7 +30,9 @@
 #include <sys/mman.h>
 
 
+#define __FreeBSD__
 #include <linux/input.h>
+#undef __FreeBSD__
 
 #include "window.h"
 #include "input-method-client-protocol.h"
