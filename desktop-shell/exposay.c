@@ -25,9 +25,7 @@
 
 #include "config.h"
 
-#define __FreeBSD__
 #include <linux/input.h>
-#undef __FreeBSD__
 
 #include "shell.h"
 #include "shared/helpers.h"
