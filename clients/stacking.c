@@ -28,10 +28,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <errno.h>
 
-#define __FreeBSD__
 #include <linux/input.h>
-#undef __FreeBSD__
 #include <cairo.h>
 
 #include "shared/helpers.h"
@@ -298,7 +297,7 @@ main(int argc, char *argv[])
 
 	stacking.display = display_create(&argc, argv);
 	if (stacking.display == NULL) {
-		fprintf(stderr, "Failed to create display: %m\n");
+		fprintf(stderr, "Failed to create display: %s\n", strerror(errno));
 		return -1;
 	}
 

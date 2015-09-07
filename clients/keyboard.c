@@ -27,10 +27,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
-#define __FreeBSD__
 #include <linux/input.h>
-#undef __FreeBSD__
 #include <cairo.h>
 
 #include "window.h"
@@ -991,7 +990,7 @@ main(int argc, char *argv[])
 
 	virtual_keyboard.display = display_create(&argc, argv);
 	if (virtual_keyboard.display == NULL) {
-		fprintf(stderr, "failed to create display: %m\n");
+		fprintf(stderr, "failed to create display: %s\n", strerror(errno));
 		return -1;
 	}
 

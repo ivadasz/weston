@@ -69,9 +69,7 @@ typedef void *EGLContext;
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-cursor.h>
 
-#define __FreeBSD__
 #include <linux/input.h>
-#undef __FreeBSD__
 #include <wayland-client.h>
 #include "shared/cairo-util.h"
 #include "shared/helpers.h"
@@ -722,8 +720,8 @@ make_shm_pool(struct display *display, int size, void **data)
 
 	fd = os_create_anonymous_file(size);
 	if (fd < 0) {
-		fprintf(stderr, "creating a buffer file for %d B failed: %m\n",
-			size);
+		fprintf(stderr, "creating a buffer file for %d B failed: %s\n",
+			size, strerror(errno));
 		return NULL;
 	}
 
@@ -5612,7 +5610,7 @@ display_create(int *argc, char *argv[])
 
 	d->display = wl_display_connect(NULL);
 	if (d->display == NULL) {
-		fprintf(stderr, "failed to connect to Wayland display: %m\n");
+		fprintf(stderr, "failed to connect to Wayland display: %s\n", strerror(errno));
 		free(d);
 		return NULL;
 	}
@@ -5644,7 +5642,7 @@ display_create(int *argc, char *argv[])
 	wl_registry_add_listener(d->registry, &registry_listener, d);
 
 	if (wl_display_roundtrip(d->display) < 0) {
-		fprintf(stderr, "Failed to process Wayland connection: %m\n");
+		fprintf(stderr, "Failed to process Wayland connection: %s\n", strerror(errno));
 		return NULL;
 	}
 

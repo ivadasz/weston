@@ -36,9 +36,7 @@
 #include <time.h>
 #include <cairo.h>
 #include <assert.h>
-#define __FreeBSD__
 #include <linux/input.h>
-#undef __FreeBSD__
 
 #include <wayland-client.h>
 

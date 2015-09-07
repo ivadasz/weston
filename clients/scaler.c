@@ -29,9 +29,7 @@
 #include <assert.h>
 #include <cairo.h>
 
-#define __FreeBSD__
 #include <linux/input.h>
-#undef __FreeBSD__
 
 #include "window.h"
 #include "scaler-client-protocol.h"
