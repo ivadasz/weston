@@ -188,7 +188,7 @@ trigger_binding(struct weston_keyboard *keyboard, uint32_t time, uint32_t key,
 		const char *msg;
 
 		switch (errno) {
-		case ETIME:
+		case ETIMEDOUT:
 			msg = "failure in datetime formatting";
 			break;
 		default:

@@ -59,7 +59,7 @@ weston_timeline_do_open(void)
 		const char *msg;
 
 		switch (errno) {
-		case ETIME:
+		case ETIMEDOUT:
 			msg = "failure in datetime formatting";
 			break;
 		default:

@@ -43,9 +43,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <math.h>
-#define __FreeBSD__
 #include <linux/input.h>
-#undef __FreeBSD__
 #include <dlfcn.h>
 #include <signal.h>
 #include <setjmp.h>
@@ -258,7 +256,7 @@ child_client_exec(int sockfd, const char *path)
 	 * non-CLOEXEC fd to pass through exec. */
 	clientfd = dup(sockfd);
 	if (clientfd == -1) {
-		weston_log("compositor: dup failed: %m\n");
+		weston_log("compositor: dup failed: %s\n", strerror(errno));
 		return;
 	}
 
@@ -266,8 +264,8 @@ child_client_exec(int sockfd, const char *path)
 	setenv("WAYLAND_SOCKET", s, 1);
 
 	if (execl(path, path, NULL) < 0)
-		weston_log("compositor: executing '%s' failed: %m\n",
-			path);
+		weston_log("compositor: executing '%s' failed: %s\n",
+			path, strerror(errno));
 }
 
 WL_EXPORT struct wl_client *
@@ -284,8 +282,8 @@ weston_client_launch(struct weston_compositor *compositor,
 
 	if (os_socketpair_cloexec(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
 		weston_log("weston_client_launch: "
-			"socketpair failed while launching '%s': %m\n",
-			path);
+			"socketpair failed while launching '%s': %s\n",
+			path, strerror(errno));
 		return NULL;
 	}
 
@@ -294,7 +292,7 @@ weston_client_launch(struct weston_compositor *compositor,
 		close(sv[0]);
 		close(sv[1]);
 		weston_log("weston_client_launch: "
-			"fork failed while launching '%s': %m\n", path);
+			"fork failed while launching '%s': %s\n", path, strerror(errno));
 		return NULL;
 	}
 
@@ -4685,8 +4683,8 @@ weston_compositor_read_presentation_clock(
 
 		if (!warned)
 			weston_log("Error: failure to read "
-				   "the presentation clock %#x: '%m' (%d)\n",
-				   compositor->presentation_clock, errno);
+				   "the presentation clock %#x: '%s' (%d)\n",
+				   compositor->presentation_clock, strerror(errno), errno);
 		warned = true;
 	}
 }

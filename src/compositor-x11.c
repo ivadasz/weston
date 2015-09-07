@@ -36,9 +36,7 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/shm.h>
-#define __FreeBSD__
 #include <linux/input.h>
-#undef __FreeBSD__
 
 #include <xcb/xcb.h>
 #include <xcb/shm.h>
@@ -441,8 +439,6 @@ x11_output_repaint_shm(struct weston_output *output_base,
 	xcb_void_cookie_t cookie;
 	xcb_generic_error_t *err;
 
-//	fprintf(stderr, "%s: called\n", __func__);
-
 	pixman_renderer_output_set_buffer(output_base, output->hw_surface);
 	ec->renderer->repaint_output(output_base, damage);
 
@@ -463,7 +459,6 @@ x11_output_repaint_shm(struct weston_output *output_base,
 		free(err);
 	}
 
-//	fprintf(stderr, "%s: calling wl_event_source_timer_update(..., 10)\n", __func__);
 	wl_event_source_timer_update(output->finish_frame_timer, 10);
 	return 0;
 }
