@@ -30,19 +30,6 @@
 
 #include "desktop-shell-server-protocol.h"
 
-enum animation_type {
-	ANIMATION_NONE,
-
-	ANIMATION_ZOOM,
-	ANIMATION_FADE,
-	ANIMATION_DIM_LAYER,
-};
-
-enum fade_type {
-	FADE_IN,
-	FADE_OUT
-};
-
 enum exposay_target_state {
 	EXPOSAY_TARGET_OVERVIEW, /* show all windows */
 	EXPOSAY_TARGET_CANCEL, /* return to normal, same focus */
@@ -105,7 +92,6 @@ struct workspace {
 
 	struct focus_surface *fsurf_front;
 	struct focus_surface *fsurf_back;
-	struct weston_view_animation *focus_animation;
 };
 
 struct shell_output {
@@ -164,14 +150,6 @@ struct desktop_shell {
 		unsigned int num;
 
 		struct wl_list client_list;
-
-		struct weston_animation animation;
-		struct wl_list anim_sticky_list;
-		int anim_dir;
-		uint32_t anim_timestamp;
-		double anim_current;
-		struct workspace *anim_from;
-		struct workspace *anim_to;
 	} workspaces;
 
 	struct {
@@ -179,21 +157,10 @@ struct desktop_shell {
 		struct wl_list surfaces;
 	} input_panel;
 
-	struct {
-		struct weston_view *view;
-		struct weston_view_animation *animation;
-		enum fade_type type;
-		struct wl_event_source *startup_timer;
-	} fade;
-
 	struct exposay exposay;
 
 	uint32_t binding_modifier;
 	uint32_t exposay_modifier;
-	enum animation_type win_animation_type;
-	enum animation_type win_close_animation_type;
-	enum animation_type startup_animation_type;
-	enum animation_type focus_animation_type;
 
 	struct weston_layer minimized_layer;
 
