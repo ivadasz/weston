@@ -1056,21 +1056,15 @@ change_workspace(struct desktop_shell *shell, unsigned int index)
 	from = get_current_workspace(shell);
 	to = get_workspace(shell, index);
 
-#if 0
-	if (shell->workspaces.anim_from == to &&
-	    shell->workspaces.anim_to == from) {
-		restore_focus_state(shell, to);
-		broadcast_current_workspace_state(shell);
-		return;
-	}
-#endif
-
 	restore_focus_state(shell, to);
 
-//	if (workspace_is_empty(to) && workspace_is_empty(from))
+	if (workspace_is_empty(to) && workspace_is_empty(from)) {
 		update_workspace(shell, index, from, to);
-//	else
-//		animate_workspace_change(shell, index, from, to);
+	} else {
+		update_workspace(shell, index, from, to);
+		weston_compositor_damage_all(shell->compositor);
+		weston_compositor_schedule_repaint(shell->compositor);
+	}
 
 	broadcast_current_workspace_state(shell);
 }
@@ -1172,27 +1166,14 @@ take_surface_to_workspace_by_seat(struct desktop_shell *shell,
 	replace_focus_state(shell, to, seat);
 	drop_focus_state(shell, from, surface);
 
-#if 0
-	if (shell->workspaces.anim_from == to &&
-	    shell->workspaces.anim_to == from) {
-		wl_list_remove(&to->layer.link);
-		wl_list_insert(from->layer.link.prev, &to->layer.link);
-
-		broadcast_current_workspace_state(shell);
-
-		return;
-	}
-#endif
-
-//	if (workspace_is_empty(from) &&
-//	    workspace_has_only(to, surface))
+	if (workspace_is_empty(from) &&
+	    workspace_has_only(to, surface)) {
 		update_workspace(shell, index, from, to);
-//	else {
-//		if (shsurf != NULL &&
-//		    wl_list_empty(&shsurf->workspace_transform.link))
-//			wl_list_insert(&shell->workspaces.anim_sticky_list,
-//				       &shsurf->workspace_transform.link);
-//	}
+	} else {
+		update_workspace(shell, index, from, to);
+		weston_compositor_damage_all(shell->compositor);
+		weston_compositor_schedule_repaint(shell->compositor);
+	}
 
 	broadcast_current_workspace_state(shell);
 
