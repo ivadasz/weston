@@ -48,16 +48,21 @@
 #include <EGL/egl.h>
 #include <gbm.h>
 
+#ifdef __DragonFly__
+#include <termios.h>
+#include <kbdev.h>
+#endif
+
 #include "shared/helpers.h"
 #include "shared/timespec-util.h"
-#include "libbacklight.h"
+//#include "libbacklight.h"
 #include "compositor.h"
 #include "pixman-renderer.h"
 //#include "libinput-seat.h"
 //#include "launcher-util.h"
 #include "vaapi-recorder.h"
 #include "presentation_timing-server-protocol.h"
-#include "linux-dmabuf.h"
+//#include "linux-dmabuf.h"
 
 #ifndef DRM_CAP_TIMESTAMP_MONOTONIC
 #define DRM_CAP_TIMESTAMP_MONOTONIC 0x6
@@ -89,10 +94,14 @@ enum output_config {
 struct drm_backend {
 	struct weston_backend base;
 	struct weston_compositor *compositor;
-	struct weston_seat sysmouse_seat;
+	struct weston_seat syscons_seat;
 
 	int sysmouse_fd;
 	struct wl_event_source *sysmouse_source;
+
+	int kbd_fd;
+	struct kbdev_state *kbdst;
+	struct wl_event_source *kbd_source;
 
 #if 0
 	struct udev *udev;
@@ -137,8 +146,8 @@ struct drm_backend {
 
 //	struct udev_input input;
 
-	uint32_t cursor_width;
-	uint32_t cursor_height;
+	int32_t cursor_width;
+	int32_t cursor_height;
 };
 
 struct drm_mode {
@@ -949,7 +958,7 @@ drm_output_prepare_overlay_view(struct drm_output *output,
 	struct weston_buffer_viewport *viewport = &ev->surface->buffer_viewport;
 	struct wl_resource *buffer_resource;
 	struct drm_sprite *s;
-	struct linux_dmabuf_buffer *dmabuf;
+//	struct linux_dmabuf_buffer *dmabuf;
 	int found = 0;
 	struct gbm_bo *bo;
 	pixman_region32_t dest_rect, src_rect;
@@ -999,6 +1008,7 @@ drm_output_prepare_overlay_view(struct drm_output *output,
 	if (!found)
 		return NULL;
 
+#if 0
 	if ((dmabuf = linux_dmabuf_buffer_get(buffer_resource))) {
 #ifdef HAVE_GBM_FD_IMPORT
 		/* XXX: TODO:
@@ -1024,7 +1034,9 @@ drm_output_prepare_overlay_view(struct drm_output *output,
 #else
 		return NULL;
 #endif
-	} else {
+	} else
+#endif
+	{
 		bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_WL_BUFFER,
 				   buffer_resource, GBM_BO_USE_SCANOUT);
 	}
@@ -2693,62 +2705,101 @@ update_outputs(struct drm_backend *b, struct udev_device *drm_device)
 #endif
 
 static int
+drm_kbd_handler(int fd, uint32_t mask, void *data)
+{
+	int i, n;
+	struct kbdev_event evs[64];
+
+	struct drm_backend *b = (struct drm_backend *)data;
+
+	fcntl(b->kbd_fd, F_SETFL, O_NONBLOCK);
+	n = kbdev_read_events(b->kbdst, evs, 64);
+	if (n <= 0) {
+//		fprintf(stderr, "%s: read %d bytes\n", __func__, n);
+//		wl_event_source_remove(b->kbd_source);
+		return 0;
+	}
+//	fprintf(stderr, "%s: read %d bytes\n", __func__, n);
+	for (i = 0; i < n; i++) {
+		notify_key(&b->syscons_seat, weston_compositor_get_time(),
+		    evs[i].keycode,
+		    evs[i].pressed ? WL_KEYBOARD_KEY_STATE_PRESSED :
+		                     WL_KEYBOARD_KEY_STATE_RELEASED,
+		    STATE_UPDATE_AUTOMATIC);
+	}
+
+	return 1;
+}
+
+static int
 drm_sysmouse_handler(int fd, uint32_t mask, void *data)
 {
-	char buf[125];
-	int xdelta, ydelta;
+	char buf[128];
+	int xdelta, ydelta, zdelta;
 	wl_fixed_t xf, yf;
 	int nm;
 	static int oldmask = 7;
 	uint32_t time;
 	int k, n;
 
-	struct drm_compositor *ec = (struct drm_compositor *)data;
+	struct drm_backend *b = (struct drm_backend *)data;
 
 	k = 0;
-	if ((n = read(ec->sysmouse_fd, buf, 125)) <= 0) {
+	if ((n = read(b->sysmouse_fd, buf, sizeof(buf))) <= 0) {
 		fprintf(stderr, "%s: read %d bytes\n", __func__, n);
-//		wl_event_source_remove(ec->sysmouse_source);
+//		wl_event_source_remove(b->sysmouse_source);
 		return 0;
 	}
 //	fprintf(stderr, "%s: read %d bytes\n", __func__, n);
 
-	for (k = 0; k < n; k += 5) {
-		if (n - k < 5 || (buf[0] & 0x80) == 0)
+	for (k = 0; k < n; k += 8) {
+		if (n - k < 8 || (buf[0] & 0x80) == 0 || (buf[7] & 0x80) != 0)
 			continue;
-//	fprintf(stderr, "%s: read bytes: 0: %02x 1: %02x 2: %02x 3: %02x 4: %02x\n",
-//	    __func__, (uint8_t)buf[k+0], (uint8_t)buf[k+1], (uint8_t)buf[k+2], (uint8_t)buf[k+3], (uint8_t)buf[k+4]);
 
 	xdelta = buf[k+1] + buf[k+3];
 	ydelta = buf[k+2] + buf[k+4];
 	ydelta = -ydelta;
+	zdelta = (buf[k+5] > 0 && buf[k+6] == 0) ? buf[k+5] | 0x80 : buf[k+5] + buf[k+6];
 
 //	fprintf(stderr, "%s: xdelta: %d, ydelta: %d\n", __func__, xdelta, ydelta);
+//	fprintf(stderr, "%s: buf[5]=0x%02x buf[6]=0x%02x zdelta: %d\n", __func__, buf[k+5], buf[k+6], (char)zdelta);
 
 	time = weston_compositor_get_time();
+
+	if (zdelta > 0 && zdelta < 128) {
+		notify_axis(&b->syscons_seat,
+			    weston_compositor_get_time(),
+			    WL_POINTER_AXIS_VERTICAL_SCROLL,
+			    wl_fixed_from_int(((char)zdelta)*10));
+	} else if (zdelta >= 128) {
+		notify_axis(&b->syscons_seat,
+			    weston_compositor_get_time(),
+			    WL_POINTER_AXIS_VERTICAL_SCROLL,
+			    wl_fixed_from_int(((char)zdelta)*10));
+	}
 
 	if (xdelta != 0 || ydelta != 0) {
 		xf = wl_fixed_from_int(xdelta);
 		yf = wl_fixed_from_int(ydelta);
-		notify_motion(&ec->sysmouse_seat, time, xf, yf);
+		notify_motion(&b->syscons_seat, time, xf, yf);
 	}
 
 	nm = buf[k+0] & 7;
 	if (nm != oldmask) {
 		if ((nm & 4) != (oldmask & 4)) {
-			notify_button(&ec->sysmouse_seat,
+			notify_button(&b->syscons_seat,
 			    time, BTN_LEFT,
 			    (nm & 4) ? WL_POINTER_BUTTON_STATE_RELEASED :
 			               WL_POINTER_BUTTON_STATE_PRESSED);
 		}
 		if ((nm & 2) != (oldmask & 2)) {
-			notify_button(&ec->sysmouse_seat,
+			notify_button(&b->syscons_seat,
 			    time, BTN_MIDDLE,
 			    (nm & 2) ? WL_POINTER_BUTTON_STATE_RELEASED :
 			               WL_POINTER_BUTTON_STATE_PRESSED);
 		}
 		if ((nm & 1) != (oldmask & 1)) {
-			notify_button(&ec->sysmouse_seat,
+			notify_button(&b->syscons_seat,
 			    time, BTN_RIGHT,
 			    (nm & 1) ? WL_POINTER_BUTTON_STATE_RELEASED :
 			               WL_POINTER_BUTTON_STATE_PRESSED);
@@ -2761,25 +2812,43 @@ drm_sysmouse_handler(int fd, uint32_t mask, void *data)
 }
 
 static int
-drm_input_create(struct drm_compositor *ec)
+drm_input_create(struct drm_backend *b)
 {
-	ec->sysmouse_fd = open("/dev/sysmouse", O_RDONLY | O_CLOEXEC);
-	if (ec->sysmouse_fd < 0)
+	b->sysmouse_fd = open("/dev/sysmouse", O_RDONLY | O_CLOEXEC);
+	if (b->sysmouse_fd < 0)
+		return -1;
+#if 0
+	b->kbd_fd = open("/dev/ttyv8", O_RDWR | O_CLOEXEC);
+	if (b->kbd_fd < 0)
+		return -1;
+#endif
+
+	int lvl = 1;
+	fcntl(b->sysmouse_fd, F_SETFL, O_NONBLOCK);
+	ioctl(b->sysmouse_fd, MOUSE_SETLEVEL, &lvl);
+
+	fcntl(b->kbd_fd, F_SETFL, O_NONBLOCK);
+	b->kbdst = kbdev_new_state(b->kbd_fd);
+	if (b->kbdst == NULL)
 		return -1;
 
-	fcntl(ec->sysmouse_fd, F_SETFL, O_NONBLOCK);
-	ioctl(ec->sysmouse_fd, MOUSE_SETLEVEL, 0);
+	weston_seat_init(&b->syscons_seat, b->compositor, "syscons");
 
-	weston_seat_init(&ec->sysmouse_seat, &ec->base, "sysmouse");
+	weston_seat_init_pointer(&b->syscons_seat);
+	weston_seat_init_keyboard(&b->syscons_seat, NULL);
 
-	weston_seat_init_pointer(&ec->sysmouse_seat);
-
-	notify_motion_absolute(&ec->sysmouse_seat, weston_compositor_get_time(), 50,
+	notify_motion_absolute(&b->syscons_seat, weston_compositor_get_time(), 50,
 50);
 
-	ec->sysmouse_source = wl_event_loop_add_fd(
-	    wl_display_get_event_loop(ec->base.wl_display), ec->sysmouse_fd,
-	    WL_EVENT_READABLE, drm_sysmouse_handler, ec);
+	b->sysmouse_source = wl_event_loop_add_fd(
+	    wl_display_get_event_loop(b->compositor->wl_display), b->sysmouse_fd,
+	    WL_EVENT_READABLE, drm_sysmouse_handler, b);
+
+	b->kbd_source = wl_event_loop_add_fd(
+	    wl_display_get_event_loop(b->compositor->wl_display), b->kbd_fd,
+	    WL_EVENT_READABLE, drm_kbd_handler, b);
+
+	fprintf(stderr, "%s: finished running\n", __func__);
 
 	return 0;
 }
@@ -3215,6 +3284,32 @@ drm_backend_create(struct weston_compositor *compositor,
 	if (b == NULL)
 		return NULL;
 
+	int fd = open("/dev/ttyv0", O_RDWR);
+	int vtno;
+	if (fd < 0)
+		return NULL;
+	if (ioctl(fd, VT_OPENQRY, &vtno) != 0)
+		return NULL;
+	weston_log("Using vt %d\n", vtno);
+	close(fd);
+	fd = open("/dev/ttyv8", O_RDWR);
+	if (fd < 0)
+		return NULL;
+	if (ioctl(fd, VT_ACTIVATE, vtno) != 0)
+		return NULL;
+	if (ioctl(fd, VT_WAITACTIVE, vtno) != 0)
+		return NULL;
+	if (ioctl(fd, KDSETMODE, KD_GRAPHICS) != 0)
+		return NULL;
+
+	b->kbd_fd = fd;
+
+	/* Putting the tty into raw mode */
+	struct termios tios;
+	tcgetattr(fd, &tios);
+	cfmakeraw(&tios);
+	tcsetattr(fd, TCSAFLUSH, &tios);
+
 	/*
 	 * KMS support for hardware planes cannot properly synchronize
 	 * without nuclear page flip. Without nuclear/atomic, hw plane
@@ -3235,12 +3330,6 @@ drm_backend_create(struct weston_compositor *compositor,
 		goto err_base;
 
 //	b->use_pixman = param->use_pixman;
-
-	if (weston_compositor_init(compositor, display, argc, argv,
-				   config) < 0) {
-		weston_log("%s failed\n", __func__);
-		goto err_base;
-	}
 
 	/* Check if we run drm-backend using weston-launch */
 #if 0
@@ -3316,7 +3405,7 @@ drm_backend_create(struct weston_compositor *compositor,
 	}
 #endif
 
-	if (create_outputs(b, param->connector, drm_device) < 0) {
+	if (create_outputs(b, param->connector) < 0) {
 		weston_log("failed to create output for %s\n", path);
 		goto err_udev_input;
 	}
