@@ -964,40 +964,6 @@ view_translate(struct workspace *ws, struct weston_view *view, double d)
 }
 
 static void
-workspace_translate_out(struct workspace *ws, double fraction)
-{
-	struct weston_view *view;
-	unsigned int height;
-	double d;
-
-	wl_list_for_each(view, &ws->layer.view_list.link, layer_link.link) {
-		height = get_output_height(view->surface->output);
-		d = height * fraction;
-
-		view_translate(ws, view, d);
-	}
-}
-
-static void
-workspace_translate_in(struct workspace *ws, double fraction)
-{
-	struct weston_view *view;
-	unsigned int height;
-	double d;
-
-	wl_list_for_each(view, &ws->layer.view_list.link, layer_link.link) {
-		height = get_output_height(view->surface->output);
-
-		if (fraction > 0)
-			d = -(height - height * fraction);
-		else
-			d = height + height * fraction;
-
-		view_translate(ws, view, d);
-	}
-}
-
-static void
 broadcast_current_workspace_state(struct desktop_shell *shell)
 {
 	struct wl_resource *resource;
