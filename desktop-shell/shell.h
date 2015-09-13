@@ -162,6 +162,8 @@ struct desktop_shell {
 	uint32_t binding_modifier;
 	uint32_t exposay_modifier;
 
+	struct wl_event_source *lock_timer;
+
 	struct weston_layer minimized_layer;
 
 	struct wl_listener seat_create_listener;
