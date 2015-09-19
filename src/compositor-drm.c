@@ -36,6 +36,7 @@
 #include <sys/consio.h>
 #include <sys/mouse.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <assert.h>
 #include <sys/mman.h>
 #include <dlfcn.h>
@@ -102,6 +103,10 @@ struct drm_backend {
 	int kbd_fd;
 	struct kbdev_state *kbdst;
 	struct wl_event_source *kbd_source;
+
+	int vtno;
+	struct wl_event_source *sigusr2_source;
+	struct wl_event_source *sighup_source;
 
 #if 0
 	struct udev *udev;
@@ -239,6 +244,7 @@ struct drm_sprite {
 };
 
 struct drm_parameters {
+	int launcherfd;
 	int connector;
 	int tty;
 //	int use_pixman;
@@ -1497,24 +1503,26 @@ init_drm(struct drm_backend *b)
 {
 	const char *filename;
 	uint64_t cap;
-	int fd, ret;
+	int ret;
 	clockid_t clk_id;
 
-	filename = "/dev/dri/card0";
-	fd = open(filename, O_RDWR | O_CLOEXEC);
-	if (fd < 0) {
-		/* Probably permissions error */
-		weston_log("couldn't open %s, skipping\n", filename);
-		return -1;
+	if (b->drm.fd == -1) {
+		filename = "/dev/dri/card0";
+		int fd = open(filename, O_RDWR | O_CLOEXEC);
+		if (fd < 0) {
+			/* Probably permissions error */
+			weston_log("couldn't open %s, skipping\n", filename);
+			return -1;
+		}
+//		fcntl(fd, F_SETFL, O_NONBLOCK);
+
+		weston_log("using %s\n", filename);
+
+		b->drm.fd = fd;
 	}
-//	fcntl(fd, F_SETFL, O_NONBLOCK);
-
-	weston_log("using %s\n", filename);
-
-	b->drm.fd = fd;
 	b->drm.filename = strdup(filename);
 
-	ret = drmGetCap(fd, DRM_CAP_TIMESTAMP_MONOTONIC, &cap);
+	ret = drmGetCap(b->drm.fd, DRM_CAP_TIMESTAMP_MONOTONIC, &cap);
 	if (ret == 0 && cap == 1)
 		clk_id = CLOCK_MONOTONIC;
 	else
@@ -1526,13 +1534,13 @@ init_drm(struct drm_backend *b)
 		return -1;
 	}
 
-	ret = drmGetCap(fd, DRM_CAP_CURSOR_WIDTH, &cap);
+	ret = drmGetCap(b->drm.fd, DRM_CAP_CURSOR_WIDTH, &cap);
 	if (ret == 0)
 		b->cursor_width = cap;
 	else
 		b->cursor_width = 64;
 
-	ret = drmGetCap(fd, DRM_CAP_CURSOR_HEIGHT, &cap);
+	ret = drmGetCap(b->drm.fd, DRM_CAP_CURSOR_HEIGHT, &cap);
 	if (ret == 0)
 		b->cursor_height = cap;
 	else
@@ -2814,13 +2822,17 @@ drm_sysmouse_handler(int fd, uint32_t mask, void *data)
 static int
 drm_input_create(struct drm_backend *b)
 {
-	b->sysmouse_fd = open("/dev/sysmouse", O_RDONLY | O_CLOEXEC);
-	if (b->sysmouse_fd < 0)
-		return -1;
+	if (b->sysmouse_fd == -1) {
+		b->sysmouse_fd = open("/dev/sysmouse", O_RDONLY | O_CLOEXEC);
+		if (b->sysmouse_fd < 0)
+			return -1;
+	}
 #if 0
-	b->kbd_fd = open("/dev/ttyv8", O_RDWR | O_CLOEXEC);
-	if (b->kbd_fd < 0)
-		return -1;
+	if (b->kbd_fd == -1) {
+		b->kbd_fd = open("/dev/ttyv8", O_RDWR | O_CLOEXEC);
+		if (b->kbd_fd < 0)
+			return -1;
+	}
 #endif
 
 	int lvl = 1;
@@ -2974,6 +2986,14 @@ session_notify(struct wl_listener *listener, void *data)
 		weston_log("deactivating session\n");
 #if 0
 		udev_input_disable(&b->input);
+#else
+		struct kbdev_event ev;
+		while (kbdev_pop_pressed(b->kbdst, &ev)) {
+			notify_key(&b->syscons_seat,
+			    weston_compositor_get_time(), ev.keycode,
+			    WL_KEYBOARD_KEY_STATE_RELEASED,
+			    STATE_UPDATE_AUTOMATIC);
+		}
 #endif
 
 		b->prev_state = compositor->state;
@@ -3007,7 +3027,17 @@ static void
 switch_vt_binding(struct weston_keyboard *keyboard, uint32_t time,
 		  uint32_t key, void *data)
 {
-#if 0
+#if 1
+	struct weston_compositor *compositor = data;
+	struct drm_backend *b = (struct drm_backend *)compositor->backend;
+	int vtno = key - KEY_F1 + 1;
+
+	if (vtno == b->vtno)
+		return;
+
+	if (ioctl(b->kbd_fd, VT_ACTIVATE, vtno) != 0)
+		warn("ioctl VT_ACTIVATE");
+#else
 	struct weston_compositor *compositor = data;
 
 	weston_launcher_activate_vt(compositor->launcher, key - KEY_F1 + 1);
@@ -3263,6 +3293,85 @@ renderer_switch_binding(struct weston_keyboard *keyboard, uint32_t time,
 }
 #endif
 
+static ssize_t
+sock_fd_read(int sock, void *buf, ssize_t buflen, int *fd)
+{
+	ssize_t		size;
+	struct msghdr	msg;
+	struct iovec	iov;
+	union {
+		struct cmsghdr	cmsghdr;
+		char		control[CMSG_SPACE(sizeof (int))];
+	} cmsgu;
+	struct cmsghdr  *cmsg;
+
+	iov.iov_base = buf;
+	iov.iov_len = buflen;
+
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+
+	msg.msg_control = cmsgu.control;
+	msg.msg_controllen = sizeof(cmsgu.control);
+	size = recvmsg(sock, &msg, 0);
+	if (size < 0) {
+		warn("recvmsg");
+		return size;
+	}
+
+	cmsg = CMSG_FIRSTHDR(&msg);
+	if (cmsg && cmsg->cmsg_len == CMSG_LEN(sizeof(int))) {
+		if (cmsg->cmsg_level != SOL_SOCKET) {
+			fprintf (stderr, "invalid cmsg_level %d\n",
+			    cmsg->cmsg_level);
+			return -1;
+		}
+		if (cmsg->cmsg_type != SCM_RIGHTS) {
+			fprintf (stderr, "invalid cmsg_type %d\n",
+			    cmsg->cmsg_type);
+			return -1;
+		}
+
+		*fd = *((int *) CMSG_DATA(cmsg));
+		printf ("received fd %d\n", *fd);
+	} else
+		*fd = -1;
+	return size;
+}
+
+static int
+handle_vtrel(int signal_number, void *data)
+{
+	struct drm_backend *b = data;
+
+	b->compositor->session_active = 0;
+	session_notify(&b->session_listener, b->compositor);
+
+	ioctl(b->kbd_fd, VT_RELDISP, VT_TRUE);
+
+	kbdev_reset_state(b->kbdst);
+
+	return 1;
+}
+
+static int
+handle_vtacq(int signal_number, void *data)
+{
+	struct drm_backend *b = data;
+
+	ioctl(b->kbd_fd, VT_RELDISP, VT_ACKACQ);
+	ioctl(b->kbd_fd, VT_ACTIVATE, b->vtno);
+	ioctl(b->kbd_fd, VT_WAITACTIVE, b->vtno);
+
+	b->compositor->session_active = 1;
+	session_notify(&b->session_listener, b->compositor);
+	kbdev_reset_state(b->kbdst);
+
+	return 1;
+}
+
 static struct drm_backend *
 drm_backend_create(struct weston_compositor *compositor,
 		      struct drm_parameters *param,
@@ -3277,38 +3386,118 @@ drm_backend_create(struct weston_compositor *compositor,
 	struct wl_event_loop *loop;
 	const char *path;
 	uint32_t key;
+	int sockfd = param->launcherfd;
+	struct vt_mode m;
+	char buf[128];
+	int fd;
+	int vtno;
 
 	weston_log("initializing drm backend\n");
+	loop = wl_display_get_event_loop(compositor->wl_display);
 
 	b = zalloc(sizeof *b);
 	if (b == NULL)
 		return NULL;
 
-	int fd = open("/dev/ttyv0", O_RDWR);
-	int vtno;
-	if (fd < 0)
+	b->drm.fd = -1;
+	b->sysmouse_fd = -1;
+	b->kbd_fd = -1;
+	b->vtno = -1;
+	fd = -1;
+
+	if (sockfd >= 0) {
+		int myfd;
+		weston_log("using weston launcher\n");
+
+		memset(buf, 0, sizeof(buf));
+		if (sock_fd_read(sockfd, buf, sizeof(buf)-1, &myfd) < 0)
+			return NULL;
+		weston_log("buf: %s\n", buf);
+		if (strcmp(buf, "drm") == 0)
+			b->drm.fd = myfd;
+		else if (strcmp(buf, "mouse") == 0)
+			b->sysmouse_fd = myfd;
+		if (strcmp(buf, "kbd") == 0)
+			fd = myfd;
+
+		memset(buf, 0, sizeof(buf));
+		if (sock_fd_read(sockfd, buf, sizeof(buf)-1, &myfd) < 0)
+			return NULL;
+		weston_log("buf: %s\n", buf);
+		if (strcmp(buf, "drm") == 0)
+			b->drm.fd = myfd;
+		else if (strcmp(buf, "mouse") == 0)
+			b->sysmouse_fd = myfd;
+		if (strcmp(buf, "kbd") == 0)
+			fd = myfd;
+
+		memset(buf, 0, sizeof(buf));
+		if (sock_fd_read(sockfd, buf, sizeof(buf)-1, &myfd) < 0)
+			return NULL;
+		weston_log("buf: %s\n", buf);
+		if (strcmp(buf, "drm") == 0)
+			b->drm.fd = myfd;
+		else if (strcmp(buf, "mouse") == 0)
+			b->sysmouse_fd = myfd;
+		if (strcmp(buf, "kbd") == 0)
+			fd = myfd;
+
+		if (b->drm.fd == -1 || b->sysmouse_fd == -1 || fd == -1)
+			return NULL;
+
+		if (ioctl(fd, VT_GETACTIVE, &vtno) != 0) {
+			warn("ioctl VT_GETACTIVE");
+			return NULL;
+		}
+	} else {
+		weston_log("opening device files myself\n");
+
+		fd = open("/dev/ttyv0", O_RDWR);
+		if (fd < 0)
+			return NULL;
+		if (ioctl(fd, VT_OPENQRY, &vtno) != 0)
+			return NULL;
+		weston_log("Using vt %d\n", vtno);
+		close(fd);
+		fd = open("/dev/ttyv8", O_RDWR);
+		if (fd < 0)
+			return NULL;
+		if (ioctl(fd, VT_ACTIVATE, vtno) != 0)
+			return NULL;
+		if (ioctl(fd, VT_WAITACTIVE, vtno) != 0)
+			return NULL;
+		if (ioctl(fd, KDSETMODE, KD_GRAPHICS) != 0)
+			return NULL;
+
+		/* Putting the tty into raw mode */
+		struct termios tios;
+		tcgetattr(fd, &tios);
+		cfmakeraw(&tios);
+		tcsetattr(fd, TCSAFLUSH, &tios);
+	}
+
+	b->vtno = vtno;
+
+	if (ioctl(fd, VT_GETMODE, &m) != 0) {
+		warn("ioctl VT_GETMODE");
 		return NULL;
-	if (ioctl(fd, VT_OPENQRY, &vtno) != 0)
+	}
+	m.mode = VT_PROCESS;
+	m.relsig = SIGUSR2;
+	m.acqsig = SIGHUP;
+	m.frsig = SIGIO; /* not used, but has to be set anyway */
+	if (ioctl(fd, VT_SETMODE, &m) != 0) {
+		warn("ioctl VT_SETMODE");
 		return NULL;
-	weston_log("Using vt %d\n", vtno);
-	close(fd);
-	fd = open("/dev/ttyv8", O_RDWR);
-	if (fd < 0)
-		return NULL;
-	if (ioctl(fd, VT_ACTIVATE, vtno) != 0)
-		return NULL;
-	if (ioctl(fd, VT_WAITACTIVE, vtno) != 0)
-		return NULL;
-	if (ioctl(fd, KDSETMODE, KD_GRAPHICS) != 0)
-		return NULL;
+	}
+	signal(SIGUSR2, SIG_IGN);
+	signal(SIGHUP, SIG_IGN);
+	b->sigusr2_source = wl_event_loop_add_signal(loop, SIGUSR2,
+						       handle_vtrel, b);
+	b->sighup_source = wl_event_loop_add_signal(loop, SIGHUP,
+						    handle_vtacq, b);
 
 	b->kbd_fd = fd;
-
-	/* Putting the tty into raw mode */
-	struct termios tios;
-	tcgetattr(fd, &tios);
-	cfmakeraw(&tios);
-	tcsetattr(fd, TCSAFLUSH, &tios);
 
 	/*
 	 * KMS support for hardware planes cannot properly synchronize
@@ -3389,7 +3578,7 @@ drm_backend_create(struct weston_compositor *compositor,
 
 	b->prev_state = WESTON_COMPOSITOR_ACTIVE;
 
-	for (key = KEY_F1; key < KEY_F9; key++)
+	for (key = KEY_F1; key <= KEY_F12; key++)
 		weston_compositor_add_key_binding(compositor, key,
 						  MODIFIER_CTRL | MODIFIER_ALT,
 						  switch_vt_binding, compositor);
@@ -3417,7 +3606,6 @@ drm_backend_create(struct weston_compositor *compositor,
 
 	path = NULL;
 
-	loop = wl_display_get_event_loop(compositor->wl_display);
 	b->drm_source =
 		wl_event_loop_add_fd(loop, b->drm.fd,
 				     WL_EVENT_READABLE, on_drm_input, b);
@@ -3505,6 +3693,7 @@ backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
 	struct drm_parameters param = { 0, };
 
 	const struct weston_option drm_options[] = {
+		{ WESTON_OPTION_INTEGER, "launcherfd", -1, &param.launcherfd },
 		{ WESTON_OPTION_INTEGER, "connector", 0, &param.connector },
 		{ WESTON_OPTION_STRING, "seat", 0, &param.seat_id },
 		{ WESTON_OPTION_INTEGER, "tty", 0, &param.tty },
