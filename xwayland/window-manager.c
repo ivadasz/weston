@@ -787,13 +787,13 @@ weston_wm_window_activate(struct wl_listener *listener, void *data)
 	if (wm->focus_window) {
 		if (wm->focus_window->frame)
 			frame_unset_flag(wm->focus_window->frame, FRAME_FLAG_ACTIVE);
-//		weston_wm_window_schedule_repaint(wm->focus_window);
+		weston_wm_window_schedule_repaint(wm->focus_window);
 	}
 	wm->focus_window = window;
 	if (wm->focus_window) {
 		if (wm->focus_window->frame)
 			frame_set_flag(wm->focus_window->frame, FRAME_FLAG_ACTIVE);
-//		weston_wm_window_schedule_repaint(wm->focus_window);
+		weston_wm_window_schedule_repaint(wm->focus_window);
 	}
 }
 
@@ -1175,11 +1175,9 @@ weston_wm_handle_property_notify(struct weston_wm *wm, xcb_generic_event_t *even
 		read_and_dump_property(wm, property_notify->window,
 				       property_notify->atom);
 
-#if 0
 	if (property_notify->atom == wm->atom.net_wm_name ||
 	    property_notify->atom == XCB_ATOM_WM_NAME)
 		weston_wm_window_schedule_repaint(window);
-#endif
 }
 
 static void
@@ -1806,10 +1804,8 @@ weston_wm_handle_button(struct weston_wm *wm, xcb_generic_event_t *event)
 					button->event_x, button->event_y);
 	location = frame_pointer_button(window->frame, NULL,
 					button_id, button_state);
-#if 0
 	if (frame_status(window->frame) & FRAME_STATUS_REPAINT)
 		weston_wm_window_schedule_repaint(window);
-#endif
 
 	if (frame_status(window->frame) & FRAME_STATUS_MOVE) {
 		if (pointer)
@@ -1856,8 +1852,8 @@ weston_wm_handle_motion(struct weston_wm *wm, xcb_generic_event_t *event)
 
 	location = frame_pointer_motion(window->frame, NULL,
 					motion->event_x, motion->event_y);
-//	if (frame_status(window->frame) & FRAME_STATUS_REPAINT)
-//		weston_wm_window_schedule_repaint(window);
+	if (frame_status(window->frame) & FRAME_STATUS_REPAINT)
+		weston_wm_window_schedule_repaint(window);
 
 	cursor = get_cursor_for_location(location);
 	weston_wm_window_set_cursor(wm, window->frame_id, cursor);
@@ -1877,8 +1873,8 @@ weston_wm_handle_enter(struct weston_wm *wm, xcb_generic_event_t *event)
 
 	location = frame_pointer_enter(window->frame, NULL,
 				       enter->event_x, enter->event_y);
-//	if (frame_status(window->frame) & FRAME_STATUS_REPAINT)
-//		weston_wm_window_schedule_repaint(window);
+	if (frame_status(window->frame) & FRAME_STATUS_REPAINT)
+		weston_wm_window_schedule_repaint(window);
 
 	cursor = get_cursor_for_location(location);
 	weston_wm_window_set_cursor(wm, window->frame_id, cursor);
@@ -1895,8 +1891,8 @@ weston_wm_handle_leave(struct weston_wm *wm, xcb_generic_event_t *event)
 		return;
 
 	frame_pointer_leave(window->frame, NULL);
-//	if (frame_status(window->frame) & FRAME_STATUS_REPAINT)
-//		weston_wm_window_schedule_repaint(window);
+	if (frame_status(window->frame) & FRAME_STATUS_REPAINT)
+		weston_wm_window_schedule_repaint(window);
 
 	weston_wm_window_set_cursor(wm, window->frame_id, XWM_CURSOR_LEFT_PTR);
 }

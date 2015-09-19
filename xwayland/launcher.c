@@ -142,9 +142,10 @@ weston_xserver_handle_event(int listen_fd, uint32_t mask, void *data)
 			  NULL) < 0)
 			weston_log("exec of '%s %s -rootless "
                                    "-listen %s -listen %s -wm %s "
-                                   "-terminate' failed: %m\n",
+                                   "-terminate' failed: %s\n",
                                    xserver, display,
-                                   abstract_fd, unix_fd, wm_fd);
+                                   abstract_fd, unix_fd, wm_fd,
+				   strerror(errno));
 	fail:
 		_exit(EXIT_FAILURE);
 
@@ -254,7 +255,8 @@ bind_to_abstract_socket(int display)
 			     "/tmp/.X11-unix/X%d", display);
 	size = offsetof(struct sockaddr_un, sun_path) + name_size;
 	if (bind(fd, (struct sockaddr *) &addr, size) < 0) {
-		weston_log("failed to bind to @%s: %m\n", addr.sun_path + 1);
+		weston_log("failed to bind to @%s: %s\n", addr.sun_path + 1,
+		    strerror(errno));
 		close(fd);
 		return -1;
 	}
@@ -291,7 +293,8 @@ bind_to_unix_socket(int display)
 	size = offsetof(struct sockaddr_un, sun_path) + name_size;
 	unlink(addr.sun_path);
 	if (bind(fd, (struct sockaddr *) &addr, size) < 0) {
-		weston_log("failed to bind to %s: %m\n", addr.sun_path);
+		weston_log("failed to bind to %s: %s\n", addr.sun_path,
+		    strerror(errno));
 		close(fd);
 		return -1;
 	}
