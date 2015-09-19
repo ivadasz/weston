@@ -30,7 +30,9 @@
  */
 #ifndef LIBBACKLIGHT_H
 #define LIBBACKLIGHT_H
+#ifndef __DragonFly__
 #include <libudev.h>
+#endif
 #include <stdint.h>
 
 #ifdef __cplusplus

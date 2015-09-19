@@ -2316,14 +2316,15 @@ weston_output_schedule_repaint_reset(struct weston_output *output)
 	output->repaint_scheduled = 0;
 	TL_POINT("core_repaint_exit_loop", TLP_OUTPUT(output), TLP_END);
 
-	if (compositor->input_loop_source)
-		return;
+//	if (compositor->input_loop_source)
+//		return;
 
-	loop = wl_display_get_event_loop(compositor->wl_display);
+#if 0
 	fd = wl_event_loop_get_fd(compositor->input_loop);
 	compositor->input_loop_source =
 		wl_event_loop_add_fd(loop, fd, WL_EVENT_READABLE,
 				     weston_compositor_read_input, compositor);
+#endif
 }
 
 static int
