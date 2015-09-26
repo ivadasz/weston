@@ -33,6 +33,8 @@
 #include <rfb/rfb.h>
 #include <rfb/keysym.h>
 
+#include <presentation_timing-client-protocol.h>
+#include "shared/helpers.h"
 #include "compositor.h"
 #include "pixman-renderer.h"
 
@@ -56,8 +58,9 @@ struct frame_finished_item {
 	struct wl_list link;
 };
 
-struct vnc_compositor {
-	struct weston_compositor base;
+struct vnc_backend {
+	struct weston_backend base;
+	struct weston_compositor *compositor;
 	struct weston_seat core_seat;
 	struct wl_event_source *input_source;
 	int ptrx, ptry, ptrmask;		/* current mouse parameters */
@@ -77,7 +80,6 @@ struct vnc_output {
 	struct wl_event_source *finish_frame_timer;
 	rfbScreenInfoPtr vncserver;
 	pixman_image_t *shadow_surface, *surface_a, *surface_b;
-	struct vnc_compositor *c;
 	void *fb_a, *fb_b;
 	uint32_t repaints, vncdisplays;
 	struct weston_plane cursor_plane;
@@ -94,13 +96,13 @@ static int frame_handler_cnt = 0;
 static void
 vnc_output_start_repaint_loop(struct weston_output *output)
 {
-//	struct vnc_output *vncoutput = (struct vnc_output *)output;
+	struct vnc_output *vncoutput = (struct vnc_output *)output;
 	struct timespec ts;
 
 	clock_gettime(output->compositor->presentation_clock, &ts);
 	frame_handler_cnt++;
 	finish_frame_handler(output);
-//	weston_output_finish_frame(output, &ts);
+//	weston_output_finish_frame(output, &ts, PRESENTATION_FEEDBACK_INVALID);
 
 //	fprintf(stderr, "%s: called\n", __func__);
 }
@@ -110,11 +112,14 @@ finish_frame_handler(void *data)
 {
 	struct weston_output *output = (struct weston_output *)data;
 	struct vnc_output *vncoutput = (struct vnc_output *)data;
+	struct vnc_backend *backend = (struct vnc_backend *)vncoutput->base.compositor->backend;
 	struct frame_finished_item *it, *next;
 	struct timespec ts;
 	static struct timespec lastts;
 	static int initted = 0;
 	uint64_t lastms, ms;
+
+//	weston_log("%s: running\n", __func__);
 
 	clock_gettime(output->compositor->presentation_clock, &ts);
 	if (initted) {
@@ -127,26 +132,29 @@ finish_frame_handler(void *data)
 		frame_handler_cnt++;
 	}
 
-	pthread_mutex_lock(&vncoutput->c->frame_mtx);
-	if (frame_handler_cnt <= 0 && wl_list_empty(&vncoutput->c->vnc_frame_list)) {
+	pthread_mutex_lock(&backend->frame_mtx);
+	if (frame_handler_cnt <= 0 && wl_list_empty(&backend->vnc_frame_list)) {
 		frame_handler_cnt = 0;
-		pthread_mutex_unlock(&vncoutput->c->frame_mtx);
+		pthread_mutex_unlock(&backend->frame_mtx);
 		goto wasempty;
 	}
-	wl_list_for_each_reverse_safe(it, next, &vncoutput->c->vnc_frame_list, link) {
+	wl_list_for_each_reverse_safe(it, next, &backend->vnc_frame_list, link) {
+		fprintf(stderr, "%s: frame finished\n", __func__);
 		frame_handler_cnt++;
 		ts = it->ts;
 		free(it);
 	}
 	frame_handler_cnt--;
-	weston_output_finish_frame(output, &ts);
+	weston_output_finish_frame(output, &ts,
+	    PRESENTATION_FEEDBACK_KIND_HW_COMPLETION |
+	    PRESENTATION_FEEDBACK_KIND_HW_CLOCK);
 	lastts = ts;
 	initted = 1;
-	wl_list_init(&vncoutput->c->vnc_frame_list);
-	pthread_mutex_unlock(&vncoutput->c->frame_mtx);
+	wl_list_init(&backend->vnc_frame_list);
+	pthread_mutex_unlock(&backend->frame_mtx);
 wasempty:
-
-	wl_event_source_timer_update(vncoutput->finish_frame_timer, 50);
+	wl_event_source_timer_update(vncoutput->finish_frame_timer, 20);
+//	weston_output_schedule_repaint(output);
 
 	return 1;
 
@@ -169,15 +177,16 @@ vnc_output_repaint(struct weston_output *base,
 {
 	struct vnc_output *output = (struct vnc_output *) base;
 	struct weston_compositor *ec = output->base.compositor;
+	struct vnc_backend *backend = (struct vnc_backend *)ec->backend;
 	pixman_box32_t *rects;
 	int nrects, i, x1, y1, x2, y2;
 
 //	fprintf(stderr, "%s: called\n", __func__);
 
 	/* Repaint the damaged region onto the back buffer. */
-	pthread_mutex_lock(&output->c->finish_mtx);
+	pthread_mutex_lock(&backend->finish_mtx);
 	pixman_renderer_output_set_buffer(base, output->shadow_surface);
-	pthread_mutex_unlock(&output->c->finish_mtx);
+	pthread_mutex_unlock(&backend->finish_mtx);
 	ec->renderer->repaint_output(base, damage);
 	output->repaints++;
 //	fprintf(stderr, "repaints: %u\n", output->repaints);
@@ -355,8 +364,7 @@ vnc_output_set_cursor(struct vnc_output *output)
 static void
 vnc_assign_planes(struct weston_output *output)
 {
-	struct vnc_compositor *c =
-	    (struct vnc_compositor *)output->compositor;
+	struct weston_compositor *c = output->compositor;
 	struct vnc_output *vncoutput = (struct vnc_output *)output;
 	struct weston_view *ev, *next;
 	struct weston_plane *next_plane;
@@ -364,7 +372,7 @@ vnc_assign_planes(struct weston_output *output)
 
 	i = 0;
 	k = 0;
-	wl_list_for_each_safe(ev, next, &c->base.view_list, link) {
+	wl_list_for_each_safe(ev, next, &c->view_list, link) {
 		i++;
 		next_plane = NULL;
 		if (next_plane == NULL && k == 0) {
@@ -373,7 +381,7 @@ vnc_assign_planes(struct weston_output *output)
 				k++;
 		}
 		if (next_plane == NULL) {
-			next_plane = &c->base.primary_plane;
+			next_plane = &c->primary_plane;
 		} else if (vncoutput->cursor_view == ev) {
 			weston_view_move_to_plane(ev, &vncoutput->cursor_plane);
 //			fprintf(stderr, "view with size %dx%d\n", ev->surface->width, ev->surface->height);
@@ -423,6 +431,7 @@ static void
 vnc_displayfinished_event(struct _rfbClientRec *cl, int result)
 {
 	struct vnc_output *output = cl->screen->screenData;
+	struct vnc_backend *backend = (struct vnc_backend *)output->base.compositor->backend;
 	struct frame_finished_item *it;
 
 #if 0
@@ -444,9 +453,9 @@ vnc_displayfinished_event(struct _rfbClientRec *cl, int result)
 	}
 
 	clock_gettime(output->base.compositor->presentation_clock, &it->ts);
-	pthread_mutex_lock(&output->c->frame_mtx);
-	wl_list_insert(&output->c->vnc_frame_list, &it->link);
-	pthread_mutex_unlock(&output->c->frame_mtx);
+	pthread_mutex_lock(&backend->frame_mtx);
+	wl_list_insert(&backend->vnc_frame_list, &it->link);
+	pthread_mutex_unlock(&backend->frame_mtx);
 	wl_event_source_activate(output->finish_frame_timer);
 }
 
@@ -454,7 +463,7 @@ static void
 vnc_ptr_event(int buttonMask, int x, int y, struct _rfbClientRec *cl)
 {
 	struct vnc_output *output = cl->screen->screenData;
-	struct vnc_compositor *c = output->c;
+	struct vnc_backend *backend = (struct vnc_backend *)output->base.compositor->backend;
 	struct input_event_item *it;
 
 //	fprintf(stderr, "%s: buttonMask=%d, x=%d, y=%d\n", __func__,
@@ -473,15 +482,15 @@ vnc_ptr_event(int buttonMask, int x, int y, struct _rfbClientRec *cl)
 	it->xabs = x;
 	it->yabs = y;
 
-	pthread_mutex_lock(&c->input_mtx);
-	wl_list_insert(&c->vnc_input_list, &it->link);
-	c->input_queue_length++;
-	pthread_mutex_unlock(&c->input_mtx);
+	pthread_mutex_lock(&backend->input_mtx);
+	wl_list_insert(&backend->vnc_input_list, &it->link);
+	backend->input_queue_length++;
+	pthread_mutex_unlock(&backend->input_mtx);
 
-	if (c->input_queue_length > 10000) {
-		fprintf(stderr, "%s: excessive mouse input queue length: %jd entries\n", __func__, c->input_queue_length);
-		if (*(volatile uint64_t *)&c->input_queue_length > 10000) {
-			wl_event_source_activate(c->input_source);
+	if (backend->input_queue_length > 10000) {
+		fprintf(stderr, "%s: excessive mouse input queue length: %jd entries\n", __func__, backend->input_queue_length);
+		if (*(volatile uint64_t *)&backend->input_queue_length > 10000) {
+			wl_event_source_activate(backend->input_source);
 			pthread_yield();
 		}
 	}
@@ -489,14 +498,14 @@ vnc_ptr_event(int buttonMask, int x, int y, struct _rfbClientRec *cl)
 //	fprintf(stderr, "%s: x=%d, y=%d, cx=%d, cy=%d\n", __func__, x, y, output->cx, output->cy);
 	rfbDefaultPtrAddEvent(buttonMask,x,y,cl);
 
-	wl_event_source_activate(c->input_source);
+	wl_event_source_activate(backend->input_source);
 }
 
 static void
 vnc_kbd_event(rfbBool down, rfbKeySym keySym, struct _rfbClientRec *cl)
 {
 	struct vnc_output *output = cl->screen->screenData;
-	struct vnc_compositor *c = output->c;
+	struct vnc_backend *backend = (struct vnc_backend *)output->base.compositor->backend;
 	struct input_event_item *it;
 
 	if (down) {
@@ -517,24 +526,24 @@ vnc_kbd_event(rfbBool down, rfbKeySym keySym, struct _rfbClientRec *cl)
 	it->down = down;
 	it->keySym = keySym;
 
-	pthread_mutex_lock(&c->input_mtx);
-	wl_list_insert(&c->vnc_input_list, &it->link);
-	c->input_queue_length++;
-	pthread_mutex_unlock(&c->input_mtx);
+	pthread_mutex_lock(&backend->input_mtx);
+	wl_list_insert(&backend->vnc_input_list, &it->link);
+	backend->input_queue_length++;
+	pthread_mutex_unlock(&backend->input_mtx);
 
-	if (c->input_queue_length > 10000) {
-		fprintf(stderr, "%s: excessive input queue length: %jd entries\n", __func__, c->input_queue_length);
-		if (*(volatile uint64_t *)&c->input_queue_length > 10000) {
-			wl_event_source_activate(c->input_source);
+	if (backend->input_queue_length > 10000) {
+		fprintf(stderr, "%s: excessive input queue length: %jd entries\n", __func__, backend->input_queue_length);
+		if (*(volatile uint64_t *)&backend->input_queue_length > 10000) {
+			wl_event_source_activate(backend->input_source);
 			pthread_yield();
 		}
 	}
 
-	wl_event_source_activate(c->input_source);
+	wl_event_source_activate(backend->input_source);
 }
 
 static int
-vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, char *listen, int port)
+vnc_compositor_create_output(struct vnc_backend *b, int width, int height, char *listen, int port)
 {
 	struct vnc_output *output;
 	struct wl_event_loop *loop;
@@ -544,7 +553,6 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 	if (output == NULL)
 		return -1;
 
-	output->c = c;
 	output->vncserver = rfbGetScreen(NULL, NULL, width, height, 8, 3, 4);
 	output->vncserver->deferUpdateTime = 10;
 	output->vncserver->screenData = output;
@@ -594,12 +602,12 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 		WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED;
 	output->mode.width = width;
 	output->mode.height = height;
-	output->mode.refresh = 33;
+	output->mode.refresh = 60;
 	wl_list_init(&output->base.mode_list);
 	wl_list_insert(&output->base.mode_list, &output->mode.link);
 
 	output->base.current_mode = &output->mode;
-	weston_output_init(&output->base, &c->base, 0, 0, width, height,
+	weston_output_init(&output->base, b->compositor, 0, 0, width, height,
 			   WL_OUTPUT_TRANSFORM_NORMAL, 1);
 
 	output->base.make = "weston";
@@ -609,7 +617,7 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 		return -1;
 	}
 
-	loop = wl_display_get_event_loop(c->base.wl_display);
+	loop = wl_display_get_event_loop(b->compositor->wl_display);
 	output->finish_frame_timer =
 		wl_event_loop_add_timer(loop, finish_frame_handler, output);
 
@@ -621,11 +629,11 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 	output->base.set_dpms = NULL;
 	output->base.switch_mode = NULL;
 
-	weston_plane_init(&output->cursor_plane, &c->base, 0, 0);
+	weston_plane_init(&output->cursor_plane, b->compositor, 0, 0);
 
-	weston_compositor_stack_plane(&c->base, &output->cursor_plane, NULL);
+	weston_compositor_stack_plane(b->compositor, &output->cursor_plane, NULL);
 
-	wl_list_insert(c->base.output_list.prev, &output->base.link);
+	wl_list_insert(b->compositor->output_list.prev, &output->base.link);
 
 	rfbInitServer(output->vncserver);
 	rfbRunEventLoop(output->vncserver, -1, 1);
@@ -634,7 +642,7 @@ vnc_compositor_create_output(struct vnc_compositor *c, int width, int height, ch
 }
 
 static int
-vnc_pass_mouse_events(struct vnc_compositor *c, struct input_event_item *it)
+vnc_pass_mouse_events(struct vnc_backend *b, struct input_event_item *it)
 {
 	wl_fixed_t wl_x, wl_y;
 	int nm;
@@ -648,7 +656,7 @@ vnc_pass_mouse_events(struct vnc_compositor *c, struct input_event_item *it)
 	if (it == NULL && lazymotion) {
 		wl_x = wl_fixed_from_int(prevx);
 		wl_y = wl_fixed_from_int(prevy);
-		notify_motion_absolute(&c->core_seat, lasttime, wl_x, wl_y);
+		notify_motion_absolute(&b->core_seat, lasttime, wl_x, wl_y);
 		clicks++;
 		lazymotion = 0;
 	}
@@ -668,40 +676,40 @@ vnc_pass_mouse_events(struct vnc_compositor *c, struct input_event_item *it)
 		if (lazymotion) {
 			wl_x = wl_fixed_from_int(prevx);
 			wl_y = wl_fixed_from_int(prevy);
-			notify_motion_absolute(&c->core_seat, it->time, wl_x, wl_y);
+			notify_motion_absolute(&b->core_seat, it->time, wl_x, wl_y);
 			lazymotion = 0;
 			clicks++;
 		}
 //		fprintf(stderr, "setting mask from %d to %d\n", prevmask, nm);
 		if ((prevmask & 1) != (nm & 1)) {
-			notify_button(&c->core_seat,
+			notify_button(&b->core_seat,
 			    it->time, BTN_LEFT,
 			    (nm & 1) ? WL_POINTER_BUTTON_STATE_PRESSED :
 			               WL_POINTER_BUTTON_STATE_RELEASED);
 			clicks++;
 		}
 		if ((prevmask & 2) != (nm & 2)) {
-			notify_button(&c->core_seat,
+			notify_button(&b->core_seat,
 			    it->time, BTN_MIDDLE,
 			    (nm & 2) ? WL_POINTER_BUTTON_STATE_PRESSED :
 			               WL_POINTER_BUTTON_STATE_RELEASED);
 			clicks++;
 		}
 		if ((prevmask & 4) != (nm & 4)) {
-			notify_button(&c->core_seat,
+			notify_button(&b->core_seat,
 			    it->time, BTN_RIGHT,
 			    (nm & 4) ? WL_POINTER_BUTTON_STATE_PRESSED :
 			               WL_POINTER_BUTTON_STATE_RELEASED);
 			clicks++;
 		}
 		if ((prevmask & 8) != (nm & 8)) {
-			notify_axis(&c->core_seat,
+			notify_axis(&b->core_seat,
 			    it->time, WL_POINTER_AXIS_VERTICAL_SCROLL,
 			    -DEFAULT_AXIS_STEP_DISTANCE);
 			clicks++;
 		}
 		if ((prevmask & 16) != (nm & 16)) {
-			notify_axis(&c->core_seat,
+			notify_axis(&b->core_seat,
 			    it->time, WL_POINTER_AXIS_VERTICAL_SCROLL,
 			    DEFAULT_AXIS_STEP_DISTANCE);
 			clicks++;
@@ -921,7 +929,7 @@ vnc_keysym_to_key(int sym)
 }
 
 static int
-vnc_pass_kbd_events(struct vnc_compositor *c, struct input_event_item *it)
+vnc_pass_kbd_events(struct vnc_backend *b, struct input_event_item *it)
 {
 	enum wl_keyboard_key_state state;
 	uint32_t key, sym;
@@ -935,7 +943,7 @@ vnc_pass_kbd_events(struct vnc_compositor *c, struct input_event_item *it)
 	sym = it->keySym;
 	key = vnc_keysym_to_key(sym);
 
-	notify_key(&c->core_seat, it->time, key, state,
+	notify_key(&b->core_seat, it->time, key, state,
 	    STATE_UPDATE_AUTOMATIC);
 
 	return 1;
@@ -944,7 +952,7 @@ vnc_pass_kbd_events(struct vnc_compositor *c, struct input_event_item *it)
 static int
 vnc_input_handler(void *data)
 {
-	struct vnc_compositor *c = (struct vnc_compositor *)data;
+	struct vnc_backend *b = (struct vnc_backend *)data;
 	struct input_event_item *it, *next;
 #if 0
 	struct frame_finished_item *frameit;
@@ -952,27 +960,27 @@ vnc_input_handler(void *data)
 	struct vnc_output *output = NULL;
 	int changes = 0;
 
-	pthread_mutex_lock(&c->input_mtx);
-	if (wl_list_empty(&c->vnc_input_list)) {
-		pthread_mutex_unlock(&c->input_mtx);
+	pthread_mutex_lock(&b->input_mtx);
+	if (wl_list_empty(&b->vnc_input_list)) {
+		pthread_mutex_unlock(&b->input_mtx);
 		return 0;
 	}
-	wl_list_for_each_reverse_safe(it, next, &c->vnc_input_list, link) {
+	wl_list_for_each_reverse_safe(it, next, &b->vnc_input_list, link) {
 		if (it->type == 1) {
 			output = it->output;
-			changes += vnc_pass_mouse_events(c, it);
+			changes += vnc_pass_mouse_events(b, it);
 		} else if (it->type == 2) {
 			output = it->output;
-			changes += vnc_pass_mouse_events(c, NULL);
-			changes += vnc_pass_kbd_events(c, it);
+			changes += vnc_pass_mouse_events(b, NULL);
+			changes += vnc_pass_kbd_events(b, it);
 		}
 		free(it);
 	}
-	wl_list_init(&c->vnc_input_list);
-	c->input_queue_length = 0;
-	pthread_mutex_unlock(&c->input_mtx);
+	wl_list_init(&b->vnc_input_list);
+	b->input_queue_length = 0;
+	pthread_mutex_unlock(&b->input_mtx);
 
-	changes += vnc_pass_mouse_events(c, NULL);
+	changes += vnc_pass_mouse_events(b, NULL);
 
 	if (output == NULL)
 		return 1;
@@ -988,51 +996,52 @@ vnc_input_handler(void *data)
 			perror("zalloc");
 			return 1;
 		}
-		clock_gettime(output->base.compositor->presentation_clock, &frameit->ts);
-		pthread_mutex_lock(&c->frame_mtx);
-		wl_list_insert(&c->vnc_frame_list, &frameit->link);
-		pthread_mutex_unlock(&c->frame_mtx);
+		clock_gettime(b->compositor->presentation_clock, &frameit->ts);
+		pthread_mutex_lock(&b->frame_mtx);
+		wl_list_insert(&b->vnc_frame_list, &frameit->link);
+		pthread_mutex_unlock(&b->frame_mtx);
 	}
 	wl_event_source_activate(output->finish_frame_timer);
 #endif
 
-	rfbMarkRectAsModified(output->vncserver, 0, 0, 1, 1);
+//	if (output != NULL)
+//		rfbMarkRectAsModified(output->vncserver, 0, 0, 1, 1);
 
 	return 1;
 }
 
 static int
-vnc_input_create(struct vnc_compositor *c)
+vnc_input_create(struct vnc_backend *b)
 {
-	weston_seat_init(&c->core_seat, &c->base, "default");
+	weston_seat_init(&b->core_seat, b->compositor, "default");
 
-	weston_seat_init_pointer(&c->core_seat);
+	weston_seat_init_pointer(&b->core_seat);
 
-	if (weston_seat_init_keyboard(&c->core_seat, NULL) < 0) {
+	if (weston_seat_init_keyboard(&b->core_seat, NULL) < 0) {
 		fprintf(stderr, "%s: failed\n", __func__);
 		return -1;
 	}
 
-	c->ptrx = 50;
-	c->ptry = 50;
-	c->ptrmask = 0;
+	b->ptrx = 50;
+	b->ptry = 50;
+	b->ptrmask = 0;
 
-	wl_list_init(&c->vnc_input_list);
-	c->input_queue_length = 0;
+	wl_list_init(&b->vnc_input_list);
+	b->input_queue_length = 0;
 
-	notify_motion_absolute(&c->core_seat, weston_compositor_get_time(), 50, 50);
+	notify_motion_absolute(&b->core_seat, weston_compositor_get_time(), 50, 50);
 
-	c->input_source = wl_event_loop_add_timer(
-	    wl_display_get_event_loop(c->base.wl_display), vnc_input_handler, c);
+	b->input_source = wl_event_loop_add_timer(
+	    wl_display_get_event_loop(b->compositor->wl_display), vnc_input_handler, b);
 
 	return 0;
 }
 
 static void
-vnc_input_destroy(struct vnc_compositor *c)
+vnc_input_destroy(struct vnc_backend *b)
 {
-	wl_event_source_remove(c->input_source);
-	weston_seat_release(&c->core_seat);
+	wl_event_source_remove(b->input_source);
+	weston_seat_release(&b->core_seat);
 }
 
 static void
@@ -1043,73 +1052,74 @@ vnc_restore(struct weston_compositor *ec)
 static void
 vnc_destroy(struct weston_compositor *ec)
 {
-	struct vnc_compositor *c = (struct vnc_compositor *) ec;
-
-	vnc_input_destroy(c);
+	vnc_input_destroy((struct vnc_backend *)ec->backend);
 	weston_compositor_shutdown(ec);
 
 	free(ec);
 }
 
-static struct weston_compositor *
-vnc_compositor_create(struct wl_display *display,
-		      int width, int height, char *listen, int port,
-		      const char *display_name, int *argc, char *argv[],
-		      struct weston_config *config)
+static struct vnc_backend *
+vnc_backend_create(struct weston_compositor *compositor,
+		   int width, int height, char *listen, int port,
+		   const char *display_name, int *argc, char *argv[],
+		   struct weston_config *config)
 {
-	struct vnc_compositor *c;
+	struct vnc_backend *b;
 
-	c = zalloc(sizeof *c);
-	if (c == NULL)
+	weston_log("initializing vnc backend\n");
+
+	b = zalloc(sizeof *b);
+	if (b == NULL)
 		return NULL;
 
-	if (pthread_mutex_init(&c->input_mtx, NULL) != 0) {
-		free(c);
-		return NULL;
-	}
-	if (pthread_mutex_init(&c->finish_mtx, NULL) != 0) {
-		free(c);
+	if (pthread_mutex_init(&b->input_mtx, NULL) != 0) {
+		free(b);
 		return NULL;
 	}
-	if (pthread_mutex_init(&c->frame_mtx, NULL) != 0) {
-		free(c);
+	if (pthread_mutex_init(&b->finish_mtx, NULL) != 0) {
+		free(b);
 		return NULL;
 	}
-	wl_list_init(&c->vnc_frame_list);
+	if (pthread_mutex_init(&b->frame_mtx, NULL) != 0) {
+		free(b);
+		return NULL;
+	}
+	wl_list_init(&b->vnc_frame_list);
 
-	if (weston_compositor_init(&c->base, display, argc, argv, config) < 0)
-		goto err_free;
-
-	if (weston_compositor_set_presentation_clock_software(&c->base) < 0)
+	b->compositor = compositor;
+	if (weston_compositor_set_presentation_clock_software(b->compositor) < 0)
 		goto err_compositor;
 
-	if (vnc_input_create(c) < 0)
+	if (vnc_input_create(b) < 0)
 		goto err_compositor;
 
-	c->base.destroy = vnc_destroy;
-	c->base.restore = vnc_restore;
+	b->base.destroy = vnc_destroy;
+	b->base.restore = vnc_restore;
 
-	if (vnc_compositor_create_output(c, width, height, listen, port) < 0)
+	if (vnc_compositor_create_output(b, width, height, listen, port) < 0)
 		goto err_input;
 
-	if (pixman_renderer_init(&c->base) < 0)
+	if (pixman_renderer_init(b->compositor) < 0)
 		goto err_input;
 
-	return &c->base;
+	compositor->backend = &b->base;
+
+	return b;
 
 err_input:
-	vnc_input_destroy(c);
+	vnc_input_destroy(b);
 err_compositor:
-	weston_compositor_shutdown(&c->base);
+	weston_compositor_shutdown(b->compositor);
 err_free:
-	free(c);
+	free(b);
 	return NULL;
 }
 
-WL_EXPORT struct weston_compositor *
-backend_init(struct wl_display *display, int *argc, char *argv[],
+WL_EXPORT int
+backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
 	     struct weston_config *config)
 {
+	struct vnc_backend *b;
 	int width = 1024, height = 640;
 	char *display_name = NULL;
 	char *listen;
@@ -1125,6 +1135,9 @@ backend_init(struct wl_display *display, int *argc, char *argv[],
 	parse_options(vnc_options,
 		      ARRAY_LENGTH(vnc_options), argc, argv);
 
-	return vnc_compositor_create(display, width, height, listen, port,
-				     display_name, argc, argv, config);
+	b = vnc_backend_create(compositor, width, height, listen, port,
+			       display_name, argc, argv, config);
+	if (b == NULL)
+		return -1;
+	return 0;
 }
